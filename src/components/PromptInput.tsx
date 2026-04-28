@@ -20,6 +20,7 @@ import {
   getTaskFocusedPanel,
   setTaskFocusedPanel,
   setTaskLastInputAt,
+  isPanelFocused,
 } from '../store/store';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
@@ -417,11 +418,7 @@ export function PromptInput(props: PromptInputProps) {
   return (
     <div
       class="focusable-panel prompt-input-panel"
-      data-panel-focused={
-        store.activeTaskId === props.taskId && store.focusedPanel[props.taskId] === 'prompt'
-          ? 'true'
-          : 'false'
-      }
+      data-panel-focused={isPanelFocused(props.taskId, 'prompt') ? 'true' : 'false'}
       style={{ display: 'flex', height: '100%', padding: '4px 6px', 'border-radius': '12px' }}
     >
       <div style={{ position: 'relative', flex: '1', display: 'flex' }}>

@@ -1,5 +1,5 @@
 import { Show, onMount } from 'solid-js';
-import { getProject, store, setTaskFocusedPanel } from '../store/store';
+import { getProject, setTaskFocusedPanel, isPanelFocused } from '../store/store';
 import { ChangedFilesList } from './ChangedFilesList';
 import { CommitNavBar } from './CommitNavBar';
 import { theme } from '../lib/theme';
@@ -36,9 +36,7 @@ export function TaskChangedFilesSection(props: TaskChangedFilesSectionProps) {
   return (
     <div
       class="task-changed-files-section focusable-panel"
-      data-panel-focused={
-        props.isActive && store.focusedPanel[props.task.id] === 'changed-files' ? 'true' : 'false'
-      }
+      data-panel-focused={isPanelFocused(props.task.id, 'changed-files') ? 'true' : 'false'}
       style={{
         // `height: 100%` fills when the panel is an absorber (notes-split
         // horizontal, 50/50 with notes). `min-height` gives the content-sized
@@ -110,7 +108,7 @@ export function TaskChangedFilesSection(props: TaskChangedFilesSectionProps) {
           worktreePath={props.task.worktreePath}
           baseBranch={props.task.baseBranch}
           isActive={props.isActive}
-          panelFocused={props.isActive && store.focusedPanel[props.task.id] === 'changed-files'}
+          panelFocused={isPanelFocused(props.task.id, 'changed-files')}
           coverageReportPath={coverageReportPath()}
           selectedCommit={props.selectedCommit}
           onFileClick={(file) => props.onDiffFileClick(file.path)}

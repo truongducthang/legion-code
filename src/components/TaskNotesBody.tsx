@@ -5,6 +5,7 @@ import {
   setTaskFocusedPanel,
   sendPrompt,
   isAgentAskingQuestion,
+  isPanelFocused,
 } from '../store/store';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
@@ -83,11 +84,7 @@ export function TaskNotesBody(props: TaskNotesBodyProps) {
   return (
     <div
       class="focusable-panel"
-      data-panel-focused={
-        store.activeTaskId === props.task.id && store.focusedPanel[props.task.id] === 'notes'
-          ? 'true'
-          : 'false'
-      }
+      data-panel-focused={isPanelFocused(props.task.id, 'notes') ? 'true' : 'false'}
       style={{
         width: '100%',
         height: '100%',

@@ -9,6 +9,7 @@ import {
   unregisterFocusFn,
   triggerFocus,
   setTaskFocusedPanel,
+  isPanelFocused,
 } from '../store/store';
 import { EditableText, type EditableTextHandle } from './EditableText';
 import { IconButton } from './IconButton';
@@ -130,9 +131,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
       {/* Terminal */}
       <div
         class="focusable-panel"
-        data-panel-focused={
-          props.isActive && store.focusedPanel[props.terminal.id] === 'terminal' ? 'true' : 'false'
-        }
+        data-panel-focused={isPanelFocused(props.terminal.id, 'terminal') ? 'true' : 'false'}
         style={{
           height: '100%',
           position: 'relative',
@@ -143,7 +142,7 @@ export function TerminalPanel(props: TerminalPanelProps) {
           taskId={props.terminal.id}
           agentId={props.terminal.agentId}
           isShell
-          isFocused={props.isActive && store.focusedPanel[props.terminal.id] === 'terminal'}
+          isFocused={isPanelFocused(props.terminal.id, 'terminal')}
           command=""
           args={['-l']}
           cwd=""

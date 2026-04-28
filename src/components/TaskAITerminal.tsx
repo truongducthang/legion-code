@@ -10,6 +10,7 @@ import {
   registerFocusFn,
   unregisterFocusFn,
   setTaskFocusedPanel,
+  isPanelFocused,
 } from '../store/store';
 import { InfoBar } from './InfoBar';
 import { TerminalView } from './TerminalView';
@@ -111,10 +112,7 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
     <>
       <div
         class="focusable-panel shell-terminal-container"
-        data-panel-focused={
-          props.isActive && store.focusedPanel[props.task.id] === 'ai-terminal' ? 'true' : 'false'
-        }
-        data-shell-focused={store.focusedPanel[props.task.id] === 'ai-terminal' ? 'true' : 'false'}
+        data-panel-focused={isPanelFocused(props.task.id, 'ai-terminal') ? 'true' : 'false'}
         style={{
           height: '100%',
           position: 'relative',
@@ -210,9 +208,7 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
                   <TerminalView
                     taskId={props.task.id}
                     agentId={a().id}
-                    isFocused={
-                      props.isActive && store.focusedPanel[props.task.id] === 'ai-terminal'
-                    }
+                    isFocused={isPanelFocused(props.task.id, 'ai-terminal')}
                     command={a().def.command}
                     args={[
                       ...(a().resumed && a().def.resume_args?.length

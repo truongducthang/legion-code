@@ -72,6 +72,8 @@ export {
   triggerAction,
   getTaskFocusedPanel,
   setTaskFocusedPanel,
+  isPanelFocused,
+  isPanelFocusedPrefix,
   focusSidebar,
   unfocusSidebar,
   unfocusPlaceholder,

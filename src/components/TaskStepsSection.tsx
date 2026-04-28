@@ -2,7 +2,7 @@ import { Show, For, createSignal, createMemo, createEffect, onCleanup, onMount }
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { useFocusRegistration } from '../lib/focus-registration';
-import { store, setTaskFocusedPanel } from '../store/store';
+import { setTaskFocusedPanel, isPanelFocused } from '../store/store';
 import type { Task } from '../store/types';
 import type { StepEntry } from '../ipc/types';
 import { warn as logWarn } from '../lib/log';
@@ -347,11 +347,7 @@ export function TaskStepsSection(props: TaskStepsSectionProps) {
   return (
     <div
       class="focusable-panel"
-      data-panel-focused={
-        store.activeTaskId === props.task.id && store.focusedPanel[props.task.id] === 'steps'
-          ? 'true'
-          : 'false'
-      }
+      data-panel-focused={isPanelFocused(props.task.id, 'steps') ? 'true' : 'false'}
       style={{
         // `height: 100%` lets the panel fill when it's sized by a user pin or
         // flex absorber. The ResizablePanel wrapper caps unpinned auto-growth;

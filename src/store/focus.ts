@@ -124,6 +124,23 @@ export function getTaskFocusedPanel(taskId: string): string {
   return store.focusedPanel[taskId] ?? defaultPanelFor(taskId);
 }
 
+/**
+ * Whether a panel within a task should render its focus border. Returns false
+ * when focus has moved to the sidebar/placeholder, even though the previously
+ * focused panel is still recorded in `focusedPanel[taskId]`.
+ */
+export function isPanelFocused(taskId: string, panel: string): boolean {
+  if (store.sidebarFocused || store.placeholderFocused) return false;
+  if (store.activeTaskId !== taskId) return false;
+  return store.focusedPanel[taskId] === panel;
+}
+
+export function isPanelFocusedPrefix(taskId: string, prefix: string): boolean {
+  if (store.sidebarFocused || store.placeholderFocused) return false;
+  if (store.activeTaskId !== taskId) return false;
+  return store.focusedPanel[taskId]?.startsWith(prefix) ?? false;
+}
+
 export function setTaskFocusedPanel(taskId: string, panel: string): void {
   setStore('focusedPanel', taskId, panel);
   setStore('sidebarFocused', false);
@@ -296,12 +313,13 @@ export function navigateColumn(direction: 'left' | 'right'): void {
     return;
   }
 
-  // From sidebar
+  // From sidebar — always enter at the leftmost task panel, regardless of which
+  // task is highlighted in the sidebar. The sidebar list is its own axis; → is
+  // for crossing into the panel area, not for activating the highlighted item.
   if (store.sidebarFocused) {
     if (direction === 'right') {
-      const targetTaskId = store.sidebarFocusedTaskId ?? taskId;
+      const targetTaskId = store.taskOrder[0] ?? store.sidebarFocusedTaskId ?? taskId;
       if (targetTaskId) {
-        // If the focused task is collapsed, uncollapse it instead of navigating into it
         if (store.tasks[targetTaskId]?.collapsed) {
           uncollapseTask(targetTaskId);
           return;

@@ -191,6 +191,22 @@ describe('focus navigation neighbor map', () => {
     expect(mockStore.focusedPanel['task-2']).toBe('notes');
   });
 
+  it('enters the leftmost task when moving right from the sidebar, ignoring the highlighted task', () => {
+    setTask('task-1');
+    setTask('task-2');
+    setTask('task-3');
+    mockStore.taskOrder = ['task-1', 'task-2', 'task-3'];
+    mockStore.activeTaskId = 'task-2';
+    mockStore.sidebarFocused = true;
+    mockStore.sidebarFocusedTaskId = 'task-3';
+
+    navigateColumn('right');
+
+    expect(mockStore.activeTaskId).toBe('task-1');
+    expect(mockStore.sidebarFocused).toBe(false);
+    expect(mockStore.focusedPanel['task-1']).toBe('ai-terminal');
+  });
+
   it('clamps split shell-toolbar down-moves to the last available shell', () => {
     setTask('task-1', {
       shellAgentIds: ['shell-1'],
