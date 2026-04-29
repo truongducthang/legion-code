@@ -3,7 +3,18 @@
 </p>
 
 <p align="center">
-  Turn wait time into parallel progress.
+  <strong>Ten agents.<br>
+  Ten branches.<br>
+  One afternoon.</strong>
+</p>
+
+<p align="center">
+  Dispatch AI coding agents in parallel, each in its own worktree.<br>
+  Review the diffs, merge the wins, toss the rest.
+</p>
+
+<p align="center">
+  Works with Claude Code, Codex, and Gemini · Every change isolated in its own git worktree · Free, open source, no extra platform fee
 </p>
 
 <p align="center">
@@ -23,8 +34,6 @@
 <p align="center">
   <img src="screens/longer-video.gif" alt="Parallel Code demo" width="800">
 </p>
-
-**Parallel Code** is a desktop app that gives every AI coding agent its own git branch and worktree — automatically.
 
 ## Screenshots
 
