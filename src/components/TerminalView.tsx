@@ -15,7 +15,14 @@ import { matchesKeyEvent } from '../lib/keybindings';
 import { store, setTaskLastInputAt } from '../store/store';
 import { warn as logWarn } from '../lib/log';
 import { registerTerminal, unregisterTerminal, markDirty } from '../lib/terminalFitManager';
+import { dataTransferToShellArgs, escapePath } from '../lib/terminalDrop';
 import type { PtyOutput } from '../ipc/types';
+
+type ClipboardPaste =
+  | { kind: 'file'; path: string }
+  | { kind: 'image'; path: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'empty' };
 
 // Pre-computed base64 lookup table — avoids atob() intermediate string allocation.
 const B64_LOOKUP = new Uint8Array(128);
@@ -243,14 +250,24 @@ export function TerminalView(props: TerminalViewProps) {
 
         if (binding.action === 'paste') {
           (async () => {
-            const text = await navigator.clipboard.readText().catch(() => '');
-            if (text) {
-              enqueueInput(text);
+            // Single round-trip resolver — main process picks the most useful
+            // representation: a file path (Finder copy), then a saved image
+            // (screenshot), then plain text. Pasting an image-file copy as
+            // its bare basename was the bug we're avoiding here.
+            //
+            // We funnel the result through term.paste() rather than writing
+            // to the PTY directly so xterm wraps the payload in bracketed
+            // paste markers (\x1b[200~ … \x1b[201~) when the agent has
+            // bracketed-paste mode on. CLI agents like Claude Code use that
+            // wrapper to recognise "the user pasted a file path", which is
+            // what triggers automatic image attachment instead of treating
+            // the path as literal typed text.
+            const paste = await invoke<ClipboardPaste>(IPC.ResolveClipboardPaste);
+            if (paste.kind === 'file' || paste.kind === 'image') {
+              term?.paste(escapePath(paste.path));
               return;
             }
-            // Fall back to clipboard image → save to temp file and paste path
-            const filePath = await invoke<string | null>(IPC.SaveClipboardImage);
-            if (filePath) enqueueInput(filePath);
+            if (paste.kind === 'text') term?.paste(paste.text);
           })().catch((err: unknown) => {
             logWarn('terminal.paste', 'paste handler failed', { err });
           });
@@ -283,6 +300,46 @@ export function TerminalView(props: TerminalViewProps) {
       }
 
       return true;
+    });
+
+    // Drag-and-drop support — when the user drops a file on the terminal,
+    // type the absolute path(s) into the agent so it can read the file. By
+    // default xterm/Browsers would only insert the basename (text/plain),
+    // which a CLI agent like Claude Code can't open.
+    function handleDragOver(e: DragEvent) {
+      if (!e.dataTransfer || e.dataTransfer.types.indexOf('Files') === -1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+    }
+    function handleDrop(e: DragEvent) {
+      if (!e.dataTransfer || e.dataTransfer.files.length === 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const dt = e.dataTransfer;
+      void (async () => {
+        try {
+          const args = await dataTransferToShellArgs(dt);
+          if (args) {
+            term?.focus();
+            // Use term.paste() so xterm emits bracketed-paste markers for
+            // agents that have bracketed-paste mode on (Claude Code,
+            // Codex). Without the markers the agent sees the path as
+            // literal typing and skips the file-attachment recognition.
+            term?.paste(args);
+          }
+        } catch (err) {
+          logWarn('terminal.drop', 'drop handler failed', { err });
+        }
+      })();
+    }
+    // Use capture so we run before xterm's own listeners (which would otherwise
+    // insert just the basename via the dragged item's text/plain payload).
+    containerRef.addEventListener('dragover', handleDragOver, true);
+    containerRef.addEventListener('drop', handleDrop, true);
+    onCleanup(() => {
+      containerRef.removeEventListener('dragover', handleDragOver, true);
+      containerRef.removeEventListener('drop', handleDrop, true);
     });
 
     fitAddon.fit();

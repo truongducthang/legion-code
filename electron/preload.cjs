@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webFrame } = require('electron');
+const { contextBridge, ipcRenderer, webFrame, webUtils } = require('electron');
 
 // Allowlist of valid IPC channels.
 // IMPORTANT: This list MUST stay in sync with the IPC enum in electron/ipc/channels.ts.
@@ -108,7 +108,8 @@ const ALLOWED_CHANNELS = new Set([
   'open_path',
   'read_file_text',
   // Clipboard
-  'save_clipboard_image',
+  'resolve_clipboard_paste',
+  'save_dropped_image',
   // Notifications
   'show_notification',
   'notification_clicked',
@@ -142,4 +143,14 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
   setZoomFactor: (factor) => webFrame.setZoomFactor(factor),
+  // Returns the absolute filesystem path for a File obtained from a drop event
+  // (or any DataTransfer / input[type=file]). Returns '' for File objects that
+  // have no backing path (e.g. images dragged from a browser tab).
+  getPathForFile: (file) => {
+    try {
+      return webUtils.getPathForFile(file) || '';
+    } catch {
+      return '';
+    }
+  },
 });

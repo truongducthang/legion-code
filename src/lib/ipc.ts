@@ -11,6 +11,9 @@ declare global {
         removeAllListeners: (channel: string) => void;
       };
       setZoomFactor: (factor: number) => void;
+      /** Returns the absolute filesystem path for a File from a drop event,
+       *  or '' for File objects without a backing path (e.g. browser image). */
+      getPathForFile: (file: File) => string;
     };
   }
 }

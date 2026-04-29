@@ -119,7 +119,8 @@ export enum IPC {
   ReadFileText = 'read_file_text',
 
   // Clipboard
-  SaveClipboardImage = 'save_clipboard_image',
+  ResolveClipboardPaste = 'resolve_clipboard_paste',
+  SaveDroppedImage = 'save_dropped_image',
 
   // Notifications
   ShowNotification = 'show_notification',

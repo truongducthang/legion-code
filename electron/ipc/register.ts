@@ -1,4 +1,5 @@
 import { ipcMain, dialog, shell, app, clipboard, BrowserWindow, Notification } from 'electron';
+import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
@@ -129,6 +130,65 @@ function getOptionalImageTag(value: unknown): string | undefined {
   const imageTag = value?.trim();
   if (imageTag === '') throw new Error('imageTag must be a non-empty string');
   return imageTag;
+}
+
+/** First file URL on the clipboard, or null if none.
+ *  macOS uses `public.file-url` (one URL per call).
+ *  Linux file managers vary:
+ *    - Files (Nautilus), Nemo, etc. publish `x-special/gnome-copied-files`
+ *      as `<verb>\nfile:///path1\nfile:///path2`, where <verb> is `copy`
+ *      or `cut`. This is the dominant Linux desktop format and MUST be
+ *      checked before `text/uri-list` because some apps publish both
+ *      flavours and the GNOME flavour is the authoritative one.
+ *    - Falls back to `text/uri-list` (newline-separated) for KDE, Xfce,
+ *      and any cross-desktop publisher that follows RFC 2483. */
+function readClipboardFileUrl(formats: string[]): string | null {
+  if (formats.includes('public.file-url')) {
+    const url = clipboard.read('public.file-url').trim();
+    if (url) return url;
+  }
+  if (formats.includes('x-special/gnome-copied-files')) {
+    const payload = clipboard.read('x-special/gnome-copied-files');
+    // First line is the verb (copy/cut); subsequent lines are file URLs.
+    const lines = payload.split('\n');
+    for (let i = 1; i < lines.length; i++) {
+      const trimmed = lines[i].trim();
+      if (trimmed.startsWith('file://')) return trimmed;
+    }
+  }
+  if (formats.includes('text/uri-list')) {
+    const list = clipboard.read('text/uri-list');
+    for (const line of list.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#') && trimmed.startsWith('file://')) return trimmed;
+    }
+  }
+  return null;
+}
+
+/** Convert a file:// URL to an absolute path, returning '' on failure. */
+function fileUrlToPath(url: string): string {
+  try {
+    return fileURLToPath(url);
+  } catch {
+    return '';
+  }
+}
+
+/** Strip path separators and clamp to a sane length so a renderer-supplied
+ *  filename can't escape the temp dir. Falls back to a generic name when empty.
+ *  Always appends a 6-char random suffix so two same-name drops landing in the
+ *  same millisecond don't overwrite each other. */
+function sanitizeDroppedName(name: string): string {
+  const base = name
+    // eslint-disable-next-line no-control-regex -- intentional NUL strip for filesystem safety
+    .replace(/[\\/\x00]/g, '_')
+    .replace(/^\.+/, '')
+    .trim()
+    .slice(0, 200);
+  const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
+  if (base) return `parallel-code-drop-${stamp}-${base}`;
+  return `parallel-code-drop-${stamp}.png`;
 }
 
 /**
@@ -644,17 +704,55 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   // --- Clipboard ---
   const clipboardImagePath = path.join(os.tmpdir(), 'parallel-code-clipboard.png');
-  ipcMain.handle(IPC.SaveClipboardImage, async () => {
+
+  // Resolve the most useful representation of the current clipboard contents
+  // for pasting into a terminal. Order of preference:
+  //   1. file references (Finder copy, Nautilus copy, etc.) → return absolute path
+  //   2. raster image (screenshot, image-app copy)         → save PNG to tmp + return path
+  //   3. plain text                                        → return as-is
+  //
+  // Without (1), copying an image file from Finder gives only the basename via
+  // navigator.clipboard.readText(), which is useless to a CLI agent that needs a
+  // path it can stat. macOS exposes file copies via the 'public.file-url' format,
+  // Linux via 'text/uri-list'. Windows is not a published target.
+  ipcMain.handle(IPC.ResolveClipboardPaste, async () => {
     try {
+      const formats = clipboard.availableFormats();
+      const fileUrl = readClipboardFileUrl(formats);
+      if (fileUrl) {
+        const filePath = fileUrlToPath(fileUrl);
+        if (filePath) return { kind: 'file', path: filePath };
+      }
       const img = clipboard.readImage();
-      if (img.isEmpty()) return null;
-      const buf = img.toPNG();
-      await fs.promises.writeFile(clipboardImagePath, buf);
-      return clipboardImagePath;
+      if (!img.isEmpty()) {
+        const buf = img.toPNG();
+        await fs.promises.writeFile(clipboardImagePath, buf);
+        return { kind: 'image', path: clipboardImagePath };
+      }
+      const text = clipboard.readText();
+      if (text) return { kind: 'text', text };
+      return { kind: 'empty' };
     } catch (e) {
-      console.error('[clipboard] Failed to save clipboard image:', e);
-      return null;
+      console.error('[clipboard] resolveClipboardPaste failed:', e);
+      return { kind: 'empty' };
     }
+  });
+
+  // Save image bytes that were dropped from a source without a filesystem path
+  // (e.g. <img> dragged from a browser). The renderer reads the dropped File as
+  // an ArrayBuffer, base64-encodes it, and forwards it here so the CLI agent
+  // can read the result. We require base64 (not Uint8Array / ArrayBuffer)
+  // because the renderer's invoke() wrapper does a JSON.parse(JSON.stringify(args))
+  // round-trip that destroys typed arrays.
+  ipcMain.handle(IPC.SaveDroppedImage, async (_e, args) => {
+    if (!args || typeof args !== 'object') throw new Error('invalid args');
+    const { name, data } = args as { name?: unknown; data?: unknown };
+    if (typeof data !== 'string') throw new Error('data must be a base64 string');
+    const buf = Buffer.from(data, 'base64');
+    const safeName = sanitizeDroppedName(typeof name === 'string' ? name : '');
+    const filePath = path.join(os.tmpdir(), safeName);
+    await fs.promises.writeFile(filePath, buf);
+    return filePath;
   });
 
   // --- System ---
