@@ -16,6 +16,7 @@ import { store, setTaskLastInputAt } from '../store/store';
 import { warn as logWarn } from '../lib/log';
 import { registerTerminal, unregisterTerminal, markDirty } from '../lib/terminalFitManager';
 import { dataTransferToShellArgs, escapePath } from '../lib/terminalDrop';
+import { cleanCopiedTerminalText } from '../lib/copy-text';
 import type { PtyOutput } from '../ipc/types';
 
 type ClipboardPaste =
@@ -243,8 +244,13 @@ export function TerminalView(props: TerminalViewProps) {
 
         // Special actions that need custom handling
         if (binding.action === 'copy') {
+          // Belt to the DOM `copy` listener's braces: covers paths where the
+          // browser's `copy` event never fires (e.g. Linux Ctrl+Shift+C goes
+          // through here, the macOS Edit→Copy menu role goes through the
+          // listener). Both produce identical cleaned output, so a redundant
+          // double-write is harmless.
           const sel = term?.getSelection();
-          if (sel) navigator.clipboard.writeText(sel);
+          if (sel) navigator.clipboard.writeText(cleanCopiedTerminalText(sel));
           return false;
         }
 
@@ -337,9 +343,26 @@ export function TerminalView(props: TerminalViewProps) {
     // insert just the basename via the dragged item's text/plain payload).
     containerRef.addEventListener('dragover', handleDragOver, true);
     containerRef.addEventListener('drop', handleDrop, true);
+
+    // Clean the selection before it reaches the clipboard: strip per-line
+    // padding (TUIs commonly fill rendered lines out to column width), then
+    // reflow wrapped paragraphs whose interior lines are uniformly long.
+    // Catches both the keybinding path and the Electron Edit→Copy menu role
+    // (which fires a synthetic `copy` event and bypasses our
+    // attachCustomKeyEventHandler hook). Capture phase runs ahead of any
+    // xterm-internal listener.
+    function handleCopy(event: ClipboardEvent) {
+      const sel = term?.getSelection();
+      if (!sel || !event.clipboardData) return;
+      event.preventDefault();
+      event.clipboardData.setData('text/plain', cleanCopiedTerminalText(sel));
+    }
+    containerRef.addEventListener('copy', handleCopy, true);
+
     onCleanup(() => {
       containerRef.removeEventListener('dragover', handleDragOver, true);
       containerRef.removeEventListener('drop', handleDrop, true);
+      containerRef.removeEventListener('copy', handleCopy, true);
     });
 
     fitAddon.fit();
