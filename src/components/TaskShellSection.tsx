@@ -9,6 +9,7 @@ import {
   markAgentOutput,
   registerFocusFn,
   unregisterFocusFn,
+  setActiveTask,
   setTaskFocusedPanel,
   isPanelFocused,
   isPanelFocusedPrefix,
@@ -156,6 +157,8 @@ export function TaskShellSection(props: TaskShellSectionProps) {
           class="icon-btn"
           onClick={(e) => {
             e.stopPropagation();
+            setActiveTask(props.task.id);
+            setTaskFocusedPanel(props.task.id, 'shell-toolbar:0');
             spawnShellForTask(props.task.id);
           }}
           tabIndex={-1}
@@ -171,6 +174,8 @@ export function TaskShellSection(props: TaskShellSectionProps) {
               class="icon-btn"
               onClick={(e) => {
                 e.stopPropagation();
+                setActiveTask(props.task.id);
+                setTaskFocusedPanel(props.task.id, `shell-toolbar:${i() + 1}`);
                 runBookmarkInTask(props.task.id, bookmark.command);
               }}
               tabIndex={-1}
