@@ -28,22 +28,25 @@ export function MergeDialog(props: MergeDialogProps) {
 
   const resourceSource = () =>
     props.open ? { path: props.task.worktreePath, baseBranch: props.task.baseBranch } : null;
-  const [branchLog, { refetch: refetchBranchLog }] = createResource(resourceSource, (src) =>
-    invoke<string>(IPC.GetBranchLog, { worktreePath: src.path, baseBranch: src.baseBranch }),
-  );
-  const [worktreeStatus, { refetch: refetchWorktreeStatus }] = createResource(
+  const [branchLog, { refetch: refetchBranchLog, mutate: mutateBranchLog }] = createResource(
     resourceSource,
     (src) =>
+      invoke<string>(IPC.GetBranchLog, { worktreePath: src.path, baseBranch: src.baseBranch }),
+  );
+  const [worktreeStatus, { refetch: refetchWorktreeStatus, mutate: mutateWorktreeStatus }] =
+    createResource(resourceSource, (src) =>
       invoke<WorktreeStatus>(IPC.GetWorktreeStatus, {
         worktreePath: src.path,
         baseBranch: src.baseBranch,
       }),
-  );
-  const [mergeStatus, { refetch: refetchMergeStatus }] = createResource(resourceSource, (src) =>
-    invoke<MergeStatus>(IPC.CheckMergeStatus, {
-      worktreePath: src.path,
-      baseBranch: src.baseBranch,
-    }),
+    );
+  const [mergeStatus, { refetch: refetchMergeStatus, mutate: mutateMergeStatus }] = createResource(
+    resourceSource,
+    (src) =>
+      invoke<MergeStatus>(IPC.CheckMergeStatus, {
+        worktreePath: src.path,
+        baseBranch: src.baseBranch,
+      }),
   );
 
   const hasConflicts = () => (mergeStatus()?.conflicting_files.length ?? 0) > 0;
@@ -67,9 +70,15 @@ export function MergeDialog(props: MergeDialogProps) {
       setRebaseSuccess(false);
       setMerging(false);
       setRebasing(false);
-      // Force fresh data on every open — covers edge cases where
-      // createResource source tracking alone misses a refresh
-      // (e.g. external rebase by AI agent while dialog was closed).
+      // Drop the previous open's cached data so accessors return undefined
+      // during refetch — otherwise unguarded reads (uncommitted-changes
+      // warning, branch-mismatch banner) flash the stale snapshot until the
+      // new fetch resolves. Then trigger refetch as a safety net for cases
+      // where source tracking alone misses (e.g. external rebase by AI
+      // agent while dialog was closed).
+      mutateBranchLog(undefined);
+      mutateMergeStatus(undefined);
+      mutateWorktreeStatus(undefined);
       refetchBranchLog();
       refetchMergeStatus();
       refetchWorktreeStatus();

@@ -446,7 +446,14 @@ async function detectDiffBase(
   baseBranch?: string,
 ): Promise<PickedMergeBase> {
   const branch = baseBranch ?? (await detectMainBranch(repoRoot));
-  const headRef = head ?? 'HEAD';
+  // Resolve the literal 'HEAD' to its commit SHA so the cache key tracks
+  // HEAD movement. Otherwise a cached `{sha:'HEAD', ref:'HEAD'}` (returned
+  // by refineDiffBaseWithCherryPick when the branch was fully patch-
+  // equivalent to base) survives a new commit on the branch — callers then
+  // run `git log HEAD..HEAD` against the literal and see no commits, even
+  // though HEAD just moved forward.
+  const requestedHead = head ?? 'HEAD';
+  const headRef = requestedHead === 'HEAD' ? await pinHead(repoRoot) : requestedHead;
   const key = `${cacheKey(repoRoot)}:${branch}:${headRef}`;
   const cached = diffBaseCache.get(key);
   if (cached) {
