@@ -562,6 +562,12 @@ function parseDiffRawNumstat(output: string): {
   return { statusMap, numstatMap };
 }
 
+function splitContentLines(content: string): string[] {
+  if (content.length === 0) return [];
+  const lines = content.split('\n');
+  return content.endsWith('\n') ? lines.slice(0, -1) : lines;
+}
+
 function parseConflictPath(line: string): string | null {
   const trimmed = line.trim();
 
@@ -979,28 +985,26 @@ export async function getChangedFiles(
 ): Promise<ChangedFile[]> {
   const headHash = await pinHead(worktreePath);
 
-  // One-way diff from the base branch's merge-base to HEAD. The three-dot
-  // range is intentionally ordered as base...head so base-only commits do not
-  // show up as changed files on stale task branches.
+  // Use the picked merge-base as the stats anchor so the file list matches
+  // the all-changes diff body, including tracked local edits on top of HEAD.
   const diffBase = await detectDiffBase(worktreePath, headHash, baseBranch).catch(() => ({
     sha: headHash,
     ref: headHash,
   }));
-  const diffRange = oneWayDiffRange(diffBase, headHash);
 
-  let diffStr = '';
+  let finalDiffStr = '';
   try {
-    const { stdout } = await exec('git', ['diff', '--raw', '--numstat', diffRange], {
+    const { stdout } = await exec('git', ['diff', '--raw', '--numstat', diffBase.sha], {
       cwd: worktreePath,
       maxBuffer: MAX_BUFFER,
     });
-    diffStr = stdout;
+    finalDiffStr = stdout;
   } catch {
     /* empty */
   }
 
-  const { statusMap: committedStatusMap, numstatMap: committedNumstatMap } =
-    parseDiffRawNumstat(diffStr);
+  const { statusMap: finalStatusMap, numstatMap: finalNumstatMap } =
+    parseDiffRawNumstat(finalDiffStr);
 
   // git diff --raw --numstat <headHash> — tracked uncommitted changes (HEAD vs working tree).
   // Compares HEAD tree directly to the working tree, so it does not need the index
@@ -1030,38 +1034,24 @@ export async function getChangedFiles(
   const files: ChangedFile[] = [];
   const seen = new Set<string>();
 
-  // Committed files from the one-way base...HEAD diff
-  for (const [p, [added, removed]] of committedNumstatMap) {
-    const status = committedStatusMap.get(p) ?? 'M';
-    // If also in uncommitted diff, mark as uncommitted (has local changes on top)
-    const committed =
-      !uncommittedNumstatMap.has(p) && !uncommittedStatusMap.has(p) && !untrackedPaths.has(p);
+  const isCommitted = (p: string) =>
+    !uncommittedNumstatMap.has(p) && !uncommittedStatusMap.has(p) && !untrackedPaths.has(p);
+
+  // Final file stats from merge-base -> working tree. This matches the diff body
+  // shown in all-changes mode, including committed work plus tracked local edits.
+  for (const [p, [added, removed]] of finalNumstatMap) {
+    const status = finalStatusMap.get(p) ?? 'M';
+    const committed = isCommitted(p);
     seen.add(p);
     files.push({ path: p, lines_added: added, lines_removed: removed, status, committed });
   }
 
-  // Committed binary/special files (in statusMap but not numstatMap)
-  for (const [p, status] of committedStatusMap) {
+  // Binary/special files (in statusMap but not numstatMap)
+  for (const [p, status] of finalStatusMap) {
     if (seen.has(p)) continue;
-    const committed =
-      !uncommittedNumstatMap.has(p) && !uncommittedStatusMap.has(p) && !untrackedPaths.has(p);
+    const committed = isCommitted(p);
     seen.add(p);
     files.push({ path: p, lines_added: 0, lines_removed: 0, status, committed });
-  }
-
-  // Tracked uncommitted files not in committed diff
-  for (const [p, [added, removed]] of uncommittedNumstatMap) {
-    if (seen.has(p)) continue;
-    const status = uncommittedStatusMap.get(p) ?? 'M';
-    seen.add(p);
-    files.push({ path: p, lines_added: added, lines_removed: removed, status, committed: false });
-  }
-
-  // Uncommitted binary/special files (in statusMap but not numstatMap)
-  for (const [p, status] of uncommittedStatusMap) {
-    if (seen.has(p) || uncommittedNumstatMap.has(p)) continue;
-    seen.add(p);
-    files.push({ path: p, lines_added: 0, lines_removed: 0, status, committed: false });
   }
 
   // Untracked (new) files: count all lines as added
@@ -1073,8 +1063,7 @@ export async function getChangedFiles(
       const stat = await fs.promises.stat(fullPath);
       if (stat.isFile() && stat.size < MAX_BUFFER) {
         const content = await fs.promises.readFile(fullPath, 'utf8');
-        const lines = content.split('\n');
-        added = content.endsWith('\n') ? lines.length - 1 : lines.length;
+        added = splitContentLines(content).length;
       }
     } catch {
       /* ignore */
@@ -1117,16 +1106,15 @@ async function buildUntrackedPseudoDiffs(worktreePath: string): Promise<string[]
         continue;
       }
       const content = await fs.promises.readFile(fullPath, 'utf8');
-      const lines = content.split('\n');
-      const lineCount = content.endsWith('\n') ? lines.length - 1 : lines.length;
+      const lines = splitContentLines(content);
       const pseudoLines: string[] = [];
       pseudoLines.push(`diff --git a/${filePath} b/${filePath}`);
       pseudoLines.push('new file mode 100644');
       pseudoLines.push('--- /dev/null');
       pseudoLines.push(`+++ b/${filePath}`);
-      pseudoLines.push(`@@ -0,0 +1,${lineCount} @@`);
-      for (let i = 0; i < lineCount; i++) {
-        pseudoLines.push(`+${lines[i]}`);
+      pseudoLines.push(`@@ -0,0 +1,${lines.length} @@`);
+      for (const line of lines) {
+        pseudoLines.push(`+${line}`);
       }
       parts.push(pseudoLines.join('\n') + '\n');
     } catch {
@@ -1303,7 +1291,7 @@ export async function getFileDiff(
     if (await isBinaryFile(fullPath)) {
       diff = `Binary files /dev/null and b/${filePath} differ`;
     } else {
-      const lines = newContent.split('\n');
+      const lines = splitContentLines(newContent);
       const pseudoLines: string[] = [];
       pseudoLines.push(`--- /dev/null`);
       pseudoLines.push(`+++ b/${filePath}`);
@@ -1317,7 +1305,7 @@ export async function getFileDiff(
 
   // Uncommitted deletion with no committed diff — build deletion pseudo-diff
   if (!diff && isUncommittedDeletion && oldContent) {
-    const lines = oldContent.split('\n');
+    const lines = splitContentLines(oldContent);
     const pseudoLines: string[] = [];
     pseudoLines.push(`--- a/${filePath}`);
     pseudoLines.push(`+++ /dev/null`);

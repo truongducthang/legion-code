@@ -31,6 +31,7 @@ vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('fs')>('fs');
   const mockStat = vi.fn().mockRejectedValue(new Error('ENOENT'));
   const mockReadFile = vi.fn().mockRejectedValue(new Error('ENOENT'));
+  const mockOpen = vi.fn().mockRejectedValue(new Error('ENOENT'));
   const mockRealpath = vi.fn().mockImplementation((p: string) => Promise.resolve(p));
   return {
     ...actual,
@@ -40,6 +41,7 @@ vi.mock('fs', async () => {
         ...actual.promises,
         stat: mockStat,
         readFile: mockReadFile,
+        open: mockOpen,
         realpath: mockRealpath,
       },
     },
@@ -437,6 +439,7 @@ function uniqueWorktreePath(): string {
  */
 function buildWorktreeMockHandler(opts: {
   mergeBase?: string;
+  finalRawNumstat?: string;
   committedRawNumstat?: string;
   uncommittedRawNumstat?: string;
   untrackedFiles?: string;
@@ -454,6 +457,7 @@ function buildWorktreeMockHandler(opts: {
   refinedRangeCount?: string;
 }): MockHandler {
   const mergeBase = opts.mergeBase ?? MERGE_BASE;
+  let singlePointRawNumstatCalls = 0;
 
   return (args, cb) => {
     const cmd = args[0];
@@ -517,6 +521,23 @@ function buildWorktreeMockHandler(opts: {
       args.some((arg) => arg.endsWith(`...${HEAD_HASH}`))
     ) {
       cb(null, opts.committedRawNumstat ?? '', '');
+      return;
+    }
+
+    // diff --raw --numstat <baseSha> — final working tree changes against base.
+    // In getChangedFiles this is the first single-point raw+numstat diff;
+    // the later HEAD single-point raw+numstat diff detects local dirtiness.
+    if (
+      cmd === 'diff' &&
+      args.includes('--raw') &&
+      args.includes('--numstat') &&
+      !args.some((arg) => arg.includes('...')) &&
+      singlePointRawNumstatCalls++ === 0
+    ) {
+      const fallback = [opts.committedRawNumstat, opts.uncommittedRawNumstat]
+        .filter((part) => part && part.length > 0)
+        .join('\n');
+      cb(null, opts.finalRawNumstat ?? fallback, '');
       return;
     }
 
@@ -682,6 +703,7 @@ describe('getChangedFiles (worktree-based, merge-base diff)', () => {
       setupMock(
         calls,
         buildWorktreeMockHandler({
+          finalRawNumstat: rawNumstatEntry('dirty.ts', 5, 1),
           committedRawNumstat: rawNumstatEntry('dirty.ts', 4, 1),
           uncommittedRawNumstat: rawNumstatEntry('dirty.ts', 1, 0),
         }),
@@ -690,6 +712,48 @@ describe('getChangedFiles (worktree-based, merge-base diff)', () => {
       const files = await getChangedFiles(uniqueWorktreePath(), 'main');
 
       expect(files[0].committed).toBe(false);
+    });
+
+    it('should report final line counts when committed files also have local changes', async () => {
+      const calls: string[][] = [];
+      setupMock(
+        calls,
+        buildWorktreeMockHandler({
+          finalRawNumstat: rawNumstatEntry('dirty.ts', 7, 2),
+          committedRawNumstat: rawNumstatEntry('dirty.ts', 4, 1),
+          uncommittedRawNumstat: rawNumstatEntry('dirty.ts', 10, 9),
+        }),
+      );
+
+      const files = await getChangedFiles(uniqueWorktreePath(), 'main');
+
+      expect(files[0].path).toBe('dirty.ts');
+      expect(files[0].lines_added).toBe(7);
+      expect(files[0].lines_removed).toBe(2);
+      expect(files[0].committed).toBe(false);
+    });
+
+    it('should compare changed-file stats from merge-base to the working tree', async () => {
+      const calls: string[][] = [];
+      setupMock(
+        calls,
+        buildWorktreeMockHandler({
+          finalRawNumstat: rawNumstatEntry('file.ts', 1, 0),
+        }),
+      );
+
+      await getChangedFiles(uniqueWorktreePath(), 'main');
+
+      const diffCall = calls.find(
+        (a) =>
+          a[0] === 'diff' &&
+          a.includes('--raw') &&
+          a.includes('--numstat') &&
+          a.includes(MERGE_BASE),
+      );
+      expect(diffCall).toBeDefined();
+      expect(diffCall).toContain(MERGE_BASE);
+      expect(diffCall).not.toContain('main...');
     });
 
     it('should return empty list when no changes since merge-base', async () => {
@@ -706,7 +770,7 @@ describe('getChangedFiles (worktree-based, merge-base diff)', () => {
       expect(files).toEqual([]);
     });
 
-    it('should use a base-to-head one-way range, not branch-tip-to-base', async () => {
+    it('should not use a branch-tip-to-base range for changed-file stats', async () => {
       const calls: string[][] = [];
       setupMock(
         calls,
@@ -717,17 +781,17 @@ describe('getChangedFiles (worktree-based, merge-base diff)', () => {
 
       await getChangedFiles(uniqueWorktreePath(), 'main');
 
-      // The committed diff must be ordered base...head, not head...base.
-      const diffCall = calls.find(
+      // Diff-base detection/refinement may inspect base...head ranges, but
+      // changed-file counts use the picked base SHA against the working tree.
+      const statsCall = calls.find(
         (a) =>
           a[0] === 'diff' &&
           a.includes('--raw') &&
           a.includes('--numstat') &&
-          a.some((arg) => arg.endsWith(`...${HEAD_HASH}`)),
+          a.includes(MERGE_BASE),
       );
-      expect(diffCall).toBeDefined();
-      expect(diffCall).toContain(`main...${HEAD_HASH}`);
-      expect(diffCall).not.toContain(`${HEAD_HASH}...main`);
+      expect(statsCall).toBeDefined();
+      expect(statsCall).not.toContain(`${HEAD_HASH}...main`);
     });
 
     it('probes both local and origin refs when both exist', async () => {
@@ -1030,6 +1094,36 @@ describe('getFileDiff (worktree-based, merge-base diff)', () => {
 
     expect(result.newContent).toBe('disk content with local edits');
   });
+
+  it('should not add a phantom line in pseudo-diffs for new files ending in a newline', async () => {
+    const calls: string[][] = [];
+    setupMock(
+      calls,
+      buildWorktreeMockHandler({
+        showOutputs: {},
+        diffOutput: '',
+      }),
+    );
+
+    vi.mocked(fs.promises.stat).mockResolvedValueOnce({
+      isFile: () => true,
+      size: 100,
+    } as unknown as Awaited<ReturnType<typeof fs.promises.stat>>);
+    vi.mocked(fs.promises.readFile).mockResolvedValueOnce('one\ntwo\n');
+    vi.mocked(fs.promises.open).mockResolvedValueOnce({
+      read: vi.fn(async (buffer: Buffer) => {
+        buffer.write('one');
+        return { bytesRead: 3, buffer };
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    } as unknown as Awaited<ReturnType<typeof fs.promises.open>>);
+
+    const result = await getFileDiff(uniqueWorktreePath(), 'new-file.ts', 'main');
+
+    expect(result.diff).toContain('@@ -0,0 +1,2 @@');
+    expect(result.diff).toContain('+one\n+two\n');
+    expect(result.diff).not.toContain('+two\n+\n');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -1058,16 +1152,16 @@ describe('refineDiffBaseWithCherryPick (via getChangedFiles)', () => {
 
     await getChangedFiles(uniqueWorktreePath(), 'main');
 
-    // The committed-diff range should now use the refined parent SHA, not main.
-    const committedDiffCall = calls.find(
+    const statsCall = calls.find(
       (a) =>
         a[0] === 'diff' &&
         a.includes('--raw') &&
         a.includes('--numstat') &&
-        a.some((arg) => arg.endsWith(`...${HEAD_HASH}`)),
+        a.includes(UNIQUE_PARENT),
     );
-    expect(committedDiffCall).toBeDefined();
-    expect(committedDiffCall).toContain(`${UNIQUE_PARENT}...${HEAD_HASH}`);
+    expect(statsCall).toBeDefined();
+    expect(statsCall).toContain(UNIQUE_PARENT);
+    expect(statsCall).not.toContain(MERGE_BASE);
   });
 
   it('refines correctly with multiple contiguous unique commits', async () => {
@@ -1090,15 +1184,16 @@ describe('refineDiffBaseWithCherryPick (via getChangedFiles)', () => {
 
     await getChangedFiles(uniqueWorktreePath(), 'main');
 
-    const committedDiffCall = calls.find(
+    const statsCall = calls.find(
       (a) =>
         a[0] === 'diff' &&
         a.includes('--raw') &&
         a.includes('--numstat') &&
-        a.some((arg) => arg.endsWith(`...${HEAD_HASH}`)),
+        a.includes(UNIQUE_PARENT),
     );
-    expect(committedDiffCall).toBeDefined();
-    expect(committedDiffCall).toContain(`${UNIQUE_PARENT}...${HEAD_HASH}`);
+    expect(statsCall).toBeDefined();
+    expect(statsCall).toContain(UNIQUE_PARENT);
+    expect(statsCall).not.toContain(MERGE_BASE);
   });
 
   it('falls back to picked base when unique commits are interleaved with patch-equivalent ones', async () => {
@@ -1114,16 +1209,14 @@ describe('refineDiffBaseWithCherryPick (via getChangedFiles)', () => {
 
     await getChangedFiles(uniqueWorktreePath(), 'main');
 
-    const committedDiffCall = calls.find(
+    const statsCall = calls.find(
       (a) =>
-        a[0] === 'diff' &&
-        a.includes('--raw') &&
-        a.includes('--numstat') &&
-        a.some((arg) => arg.endsWith(`...${HEAD_HASH}`)),
+        a[0] === 'diff' && a.includes('--raw') && a.includes('--numstat') && a.includes(MERGE_BASE),
     );
-    expect(committedDiffCall).toBeDefined();
-    // Falls back to the original picked ref (main), not the refined SHA.
-    expect(committedDiffCall).toContain(`main...${HEAD_HASH}`);
+    expect(statsCall).toBeDefined();
+    // Falls back to the original picked merge-base, not the refined SHA.
+    expect(statsCall).toContain(MERGE_BASE);
+    expect(statsCall).not.toContain(UNIQUE_PARENT);
   });
 
   it('collapses diff range to head...head when branch is fully merged upstream', async () => {
@@ -1138,17 +1231,17 @@ describe('refineDiffBaseWithCherryPick (via getChangedFiles)', () => {
 
     await getChangedFiles(uniqueWorktreePath(), 'main');
 
-    const committedDiffCall = calls.find(
+    const statsCall = calls.find(
       (a) =>
         a[0] === 'diff' &&
         a.includes('--raw') &&
         a.includes('--numstat') &&
-        a.some((arg) => arg.endsWith(`...${HEAD_HASH}`)),
+        !a.some((arg) => arg.includes('...')),
     );
-    expect(committedDiffCall).toBeDefined();
-    // Diff range collapses to head...head — no patch-equivalent noise.
-    expect(committedDiffCall).toContain(`${HEAD_HASH}...${HEAD_HASH}`);
-    expect(committedDiffCall).not.toContain(`main...${HEAD_HASH}`);
+    expect(statsCall).toBeDefined();
+    // Stats anchor collapses to HEAD — no patch-equivalent noise.
+    expect(statsCall).toContain(HEAD_HASH);
+    expect(statsCall).not.toContain(MERGE_BASE);
 
     // Refinement short-circuits: no rev-list count needed.
     const revListCounts = calls.filter((a) => a[0] === 'rev-list' && a.includes('--count'));
