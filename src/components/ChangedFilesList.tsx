@@ -4,6 +4,7 @@ import { IPC } from '../../electron/ipc/channels';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
 import { getStatusColor } from '../lib/status-colors';
+import { openFileInEditor } from '../lib/shell';
 import { buildFileTree, flattenVisibleTree } from '../lib/file-tree';
 import {
   type CommitSelection,
@@ -147,9 +148,42 @@ function FileCoverageBadge(props: {
   );
 }
 
+function OpenInEditorButton(props: { worktreePath: string; filePath: string }) {
+  return (
+    <button
+      class="changed-files-open-editor-btn"
+      onClick={(e) => {
+        e.stopPropagation();
+        void openFileInEditor(props.worktreePath, props.filePath);
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+      tabIndex={-1}
+      disabled={!props.worktreePath}
+      style={{
+        background: `color-mix(in srgb, ${theme.bgElevated} 92%, transparent)`,
+        border: 'none',
+        color: theme.fgMuted,
+        cursor: props.worktreePath ? 'pointer' : 'default',
+        padding: '4px',
+        display: 'flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        'border-radius': '4px',
+      }}
+      title="Open in editor"
+      aria-label={`Open ${props.filePath} in editor`}
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M3.5 2a1.5 1.5 0 0 0-1.5 1.5v9A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-3a.75.75 0 0 1 1.5 0v3A3 3 0 0 1 12.5 16h-9A3 3 0 0 1 0 12.5v-9A3 3 0 0 1 3.5 0h3a.75.75 0 0 1 0 1.5h-3ZM10 .75a.75.75 0 0 1 .75-.75h4.5a.75.75 0 0 1 .75.75v4.5a.75.75 0 0 1-1.5 0V2.56L8.53 8.53a.75.75 0 0 1-1.06-1.06L13.44 1.5H10.75A.75.75 0 0 1 10 .75Z" />
+      </svg>
+    </button>
+  );
+}
+
 export function ChangedFilesList(props: ChangedFilesListProps) {
   const [files, setFiles] = createSignal<ChangedFile[]>([]);
   const [coverage, setCoverage] = createSignal<CoverageSummary | null>(null);
+  const [canOpenFilesInEditor, setCanOpenFilesInEditor] = createSignal(false);
   const [selectedIndex, setSelectedIndex] = createSignal(-1);
   const [collapsed, setCollapsed] = createSignal<Set<string>>(new Set());
   const rowRefs: HTMLDivElement[] = [];
@@ -301,6 +335,7 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
     let cancelled = false;
     let inFlight = false;
     let usingBranchFallback = false;
+    setCanOpenFilesInEditor(false);
 
     async function refresh() {
       if (inFlight) return;
@@ -313,9 +348,15 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
               worktreePath: path,
               commitHash: singleCommitHash,
             });
-            if (!cancelled) setFiles(result);
+            if (!cancelled) {
+              setFiles(result);
+              setCanOpenFilesInEditor(true);
+            }
           } catch {
-            if (!cancelled) setFiles([]);
+            if (!cancelled) {
+              setFiles([]);
+              setCanOpenFilesInEditor(false);
+            }
           }
           return;
         }
@@ -325,9 +366,15 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
             const result = await invoke<ChangedFile[]>(IPC.GetUncommittedChangedFiles, {
               worktreePath: path,
             });
-            if (!cancelled) setFiles(result);
+            if (!cancelled) {
+              setFiles(result);
+              setCanOpenFilesInEditor(true);
+            }
           } catch {
-            if (!cancelled) setFiles([]);
+            if (!cancelled) {
+              setFiles([]);
+              setCanOpenFilesInEditor(false);
+            }
           }
           return;
         }
@@ -339,9 +386,13 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
               worktreePath: path,
               baseBranch,
             });
-            if (!cancelled) setFiles(result);
+            if (!cancelled) {
+              setFiles(result);
+              setCanOpenFilesInEditor(true);
+            }
             return;
           } catch {
+            if (!cancelled) setCanOpenFilesInEditor(false);
             // Worktree may not exist — try branch fallback below
           }
         }
@@ -357,8 +408,10 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
             });
             if (!cancelled) {
               setFiles(uncommittedOnly ? result.filter((f) => !f.committed) : result);
+              setCanOpenFilesInEditor(false);
             }
           } catch {
+            if (!cancelled) setCanOpenFilesInEditor(false);
             // Branch may no longer exist
           }
         }
@@ -445,6 +498,7 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
               ref={(el) => (rowRefs[i] = el)}
               class="file-row"
               style={{
+                position: 'relative',
                 display: 'flex',
                 'align-items': 'center',
                 gap: '6px',
@@ -565,6 +619,12 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
                     <span style={{ color: theme.error, 'flex-shrink': '0' }}>
                       -{row().node.file?.lines_removed}
                     </span>
+                  </Show>
+                  <Show when={canOpenFilesInEditor()}>
+                    <OpenInEditorButton
+                      worktreePath={props.worktreePath}
+                      filePath={row().node.file?.path ?? row().node.path}
+                    />
                   </Show>
                 </>
               )}

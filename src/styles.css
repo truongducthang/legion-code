@@ -1312,6 +1312,31 @@ textarea::placeholder {
   background: color-mix(in srgb, var(--accent) 8%, var(--bg-hover));
 }
 
+.changed-files-open-editor-btn {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.12s ease,
+    color 0.12s ease,
+    background 0.12s ease;
+}
+
+.file-row:hover .changed-files-open-editor-btn:not(:disabled),
+.changed-files-open-editor-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.changed-files-open-editor-btn:hover:not(:disabled),
+.changed-files-open-editor-btn:focus-visible {
+  color: var(--fg) !important;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated)) !important;
+}
+
 @keyframes statusPulse {
   0%,
   100% {
