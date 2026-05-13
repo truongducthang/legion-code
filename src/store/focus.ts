@@ -39,6 +39,8 @@ export function triggerAction(key: string): void {
 //    repeated down the left columns so left/right crossings stay consistent.
 
 const AI_TERMINAL_PANEL = 'ai-terminal';
+const SHELL_PANEL_PREFIX = 'shell:';
+const SHELL_TOOLBAR_PANEL_PREFIX = 'shell-toolbar:';
 
 function aiTerminalPanelId(agentId: string): string {
   return `${AI_TERMINAL_PANEL}:${agentId}`;
@@ -56,6 +58,48 @@ function agentIdFromAiTerminalPanel(panel: string): string | null {
 
 function aiTerminalPanels(task: { agentIds: string[] }): string[] {
   return task.agentIds.length > 0 ? task.agentIds.map(aiTerminalPanelId) : [AI_TERMINAL_PANEL];
+}
+
+function shellToolbarPanels(task: { projectId: string }): string[] {
+  const bookmarkCount =
+    store.projects.find((p) => p.id === task.projectId)?.terminalBookmarks?.length ?? 0;
+  return Array.from({ length: 1 + bookmarkCount }, (_, i) => `${SHELL_TOOLBAR_PANEL_PREFIX}${i}`);
+}
+
+function isShellPanel(panel: string): boolean {
+  return panel.startsWith(SHELL_PANEL_PREFIX);
+}
+
+function isShellToolbarPanel(panel: string): boolean {
+  return panel.startsWith(SHELL_TOOLBAR_PANEL_PREFIX);
+}
+
+function edgeIndex(count: number, entryEdge: 'left' | 'right'): number {
+  return entryEdge === 'right' ? 0 : count - 1;
+}
+
+function pickTargetTerminalFamilyPanel(
+  current: string,
+  targetTask: { shellAgentIds: string[]; projectId: string },
+  entryEdge: 'left' | 'right',
+): string | null {
+  if (isAiTerminalPanel(current)) return AI_TERMINAL_PANEL;
+
+  if (isShellPanel(current)) {
+    if (targetTask.shellAgentIds.length > 0) {
+      return `${SHELL_PANEL_PREFIX}${edgeIndex(targetTask.shellAgentIds.length, entryEdge)}`;
+    }
+
+    const toolbarPanels = shellToolbarPanels(targetTask);
+    return toolbarPanels[edgeIndex(toolbarPanels.length, entryEdge)] ?? null;
+  }
+
+  if (isShellToolbarPanel(current)) {
+    const toolbarPanels = shellToolbarPanels(targetTask);
+    return toolbarPanels[edgeIndex(toolbarPanels.length, entryEdge)] ?? null;
+  }
+
+  return null;
 }
 
 function normalizeTaskPanel(taskId: string, panel: string): string {
@@ -78,9 +122,7 @@ function isLeftColumnPanel(panel: string): boolean {
 function buildGrid(panelId: string): string[][] {
   const task = store.tasks[panelId];
   if (task) {
-    const bookmarkCount =
-      store.projects.find((p) => p.id === task.projectId)?.terminalBookmarks?.length ?? 0;
-    const toolbarCols = Array.from({ length: 1 + bookmarkCount }, (_, i) => `shell-toolbar:${i}`);
+    const toolbarCols = shellToolbarPanels(task);
     const aiCols = aiTerminalPanels(task);
 
     if (store.taskSplitMode[panelId]) {
@@ -433,6 +475,16 @@ export function navigateColumn(direction: 'left' | 'right'): void {
     } else if (!store.tasks[targetId]) {
       focusTaskPanel(targetId, defaultPanelFor(targetId));
     } else {
+      const semanticTarget = pickTargetTerminalFamilyPanel(
+        current,
+        store.tasks[targetId],
+        entryEdge,
+      );
+      if (semanticTarget) {
+        focusTaskPanel(targetId, semanticTarget);
+        return;
+      }
+
       const targetGrid = buildGrid(targetId);
       const targetPos = findInGrid(targetGrid, current);
       const targetRow = targetPos ? targetPos.row : pos.row;

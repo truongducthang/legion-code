@@ -301,6 +301,55 @@ describe('focus navigation neighbor map', () => {
     expect(mockStore.activeAgentId).toBe('agent-2b');
   });
 
+  it('stays on the AI terminal row when crossing into a task with shell terminals', () => {
+    setTask('task-1', { agentIds: ['agent-1a', 'agent-1b'] });
+    setTask('task-2', {
+      agentIds: ['agent-2a', 'agent-2b'],
+      selectedAgentId: 'agent-2b',
+      shellAgentIds: ['shell-2'],
+    });
+    mockStore.taskOrder = ['task-1', 'task-2'];
+    mockStore.focusedPanel['task-1'] = 'ai-terminal:agent-1b';
+
+    navigateColumn('right');
+
+    expect(mockStore.activeTaskId).toBe('task-2');
+    expect(mockStore.focusedPanel['task-2']).toBe('ai-terminal:agent-2b');
+    expect(mockStore.activeAgentId).toBe('agent-2b');
+  });
+
+  it('stays on the AI terminal row when crossing left into a task with shell terminals', () => {
+    setTask('task-1', {
+      agentIds: ['agent-1a', 'agent-1b'],
+      selectedAgentId: 'agent-1b',
+      shellAgentIds: ['shell-1'],
+    });
+    setTask('task-2', { agentIds: ['agent-2a', 'agent-2b'] });
+    mockStore.taskOrder = ['task-1', 'task-2'];
+    mockStore.activeTaskId = 'task-2';
+    mockStore.activeAgentId = 'agent-2a';
+    mockStore.focusedPanel['task-2'] = 'ai-terminal:agent-2a';
+
+    navigateColumn('left');
+
+    expect(mockStore.activeTaskId).toBe('task-1');
+    expect(mockStore.focusedPanel['task-1']).toBe('ai-terminal:agent-1b');
+    expect(mockStore.activeAgentId).toBe('agent-1b');
+  });
+
+  it('crosses from a shell terminal to the target shell toolbar when no shell is open', () => {
+    setTask('task-1', { shellAgentIds: ['shell-1'] });
+    setTask('task-2', { agentIds: ['agent-2a', 'agent-2b'] });
+    mockStore.taskOrder = ['task-1', 'task-2'];
+    mockStore.focusedPanel['task-1'] = 'shell:0';
+
+    navigateColumn('right');
+
+    expect(mockStore.activeTaskId).toBe('task-2');
+    expect(mockStore.focusedPanel['task-2']).toBe('shell-toolbar:0');
+    expect(mockStore.activeAgentId).toBe('agent-2a');
+  });
+
   it('moves down from a secondary split-mode AI terminal to the prompt', () => {
     setTask('task-1', { agentIds: ['agent-1', 'agent-2'] });
     mockStore.taskSplitMode['task-1'] = true;
