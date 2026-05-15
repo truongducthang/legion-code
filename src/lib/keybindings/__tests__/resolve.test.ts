@@ -79,3 +79,37 @@ describe('findConflict', () => {
     expect(conflict).toBeNull();
   });
 });
+
+// Regression guard for the task-reorder shortcut change: the old global
+// Cmd/Ctrl+Shift+Arrow binding shadowed "extend selection by word" in
+// terminals/inputs. The fix is a per-platform split. The test env has no
+// `navigator` → isMac=false → this exercises the Linux (Alt+Shift) path,
+// which is exactly where the original word-select conflict lived.
+describe('task-reorder shortcut does not shadow text selection', () => {
+  const resolved = resolveBindings(DEFAULT_BINDINGS, { preset: 'default', userOverrides: {} });
+
+  it('resolves the Linux Alt+Shift+Arrow variant, filtering out the mac-only one', () => {
+    const linuxLeft = resolved.find((b) => b.id === 'app.task.reorder-left-linux');
+    expect(linuxLeft?.key).toBe('ArrowLeft');
+    expect(linuxLeft?.modifiers).toEqual({ alt: true, shift: true });
+    expect(resolved.find((b) => b.id === 'app.task.reorder-left')).toBeUndefined();
+  });
+
+  it('Alt+Shift+Arrow reorder is disjoint from Alt+Arrow pane-focus nav', () => {
+    // The core correctness claim: adding Shift keeps reorder distinct from
+    // column nav, so Ctrl+Shift+Arrow word-select is freed without a new clash.
+    expect(
+      findConflict(resolved, 'app.task.reorder-left-linux', {
+        key: 'ArrowLeft',
+        modifiers: { alt: true, shift: true },
+      }),
+    ).toBeNull();
+    // Inverse direction: plain Alt+Arrow still belongs to column nav alone.
+    expect(
+      findConflict(resolved, 'app.nav.column-left', {
+        key: 'ArrowLeft',
+        modifiers: { alt: true },
+      }),
+    ).toBeNull();
+  });
+});

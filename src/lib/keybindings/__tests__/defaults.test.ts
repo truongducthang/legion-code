@@ -8,6 +8,8 @@ const APP_LAYER_IDS = [
   'app.nav.column-right',
   'app.task.reorder-left',
   'app.task.reorder-right',
+  'app.task.reorder-left-linux',
+  'app.task.reorder-right-linux',
   'app.task.close-shell',
   'app.task.close',
   'app.task.merge',
@@ -92,6 +94,36 @@ describe('DEFAULT_BINDINGS', () => {
           `${b.id} uses meta on platform:both — should use cmdOrCtrl`,
         ).toBe(true);
       }
+    }
+  });
+});
+
+// Locks the per-platform task-reorder modifiers so a future edit can't
+// silently regress to a combo that shadows native text selection
+// (Cmd+Shift = select-to-line, Opt+Shift / Ctrl+Shift = select-by-word).
+describe('task-reorder split avoids native text-selection shadowing', () => {
+  const byId = (id: string) => {
+    const binding = DEFAULT_BINDINGS.find((b) => b.id === id);
+    if (!binding) throw new Error(`expected binding not found: ${id}`);
+    return binding;
+  };
+
+  it('macOS variant uses Ctrl+Shift (not Cmd+Shift / Opt+Shift)', () => {
+    for (const id of ['app.task.reorder-left', 'app.task.reorder-right']) {
+      const b = byId(id);
+      expect(b.platform).toBe('mac');
+      // Exactly Ctrl+Shift — NOT cmdOrCtrl (Cmd+Shift = select-to-line) nor
+      // alt (Opt+Shift = select-by-word); toEqual is exhaustive so this also
+      // proves those modifiers are absent.
+      expect(b.modifiers).toEqual({ ctrl: true, shift: true });
+    }
+  });
+
+  it('Linux variant uses Alt+Shift (not Ctrl+Shift)', () => {
+    for (const id of ['app.task.reorder-left-linux', 'app.task.reorder-right-linux']) {
+      const b = byId(id);
+      expect(b.platform).toBe('linux');
+      expect(b.modifiers).toEqual({ alt: true, shift: true });
     }
   });
 });

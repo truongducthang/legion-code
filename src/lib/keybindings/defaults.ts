@@ -99,14 +99,21 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
   // -------------------------------------------------------------------------
   // App layer — Task reordering
   // -------------------------------------------------------------------------
+  // This binding is global, so it must not shadow native text selection in
+  // inputs/terminals. Each platform uses the Shift+modifier+Arrow combo that
+  // ISN'T a text selection there: on Linux, Ctrl+Shift+Arrow is select-by-word
+  // (so use Alt+Shift+Arrow); on macOS, Cmd+Shift = select-to-line and
+  // Opt+Shift = select-by-word, while Ctrl+Shift+Arrow is unbound (so use it).
+  // Alt+Shift+Arrow is not a default GNOME/KDE global (unlike Ctrl+Alt+Arrow),
+  // though a tiling WM could rebind it — acceptable given the constraints.
   {
     id: 'app.task.reorder-left',
     layer: 'app',
     category: 'Tasks',
     description: 'Move task left',
-    platform: 'both',
+    platform: 'mac',
     key: 'ArrowLeft',
-    modifiers: { cmdOrCtrl: true, shift: true },
+    modifiers: { ctrl: true, shift: true },
     action: 'moveActiveTask:left',
     global: true,
   },
@@ -115,9 +122,31 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     layer: 'app',
     category: 'Tasks',
     description: 'Move task right',
-    platform: 'both',
+    platform: 'mac',
     key: 'ArrowRight',
-    modifiers: { cmdOrCtrl: true, shift: true },
+    modifiers: { ctrl: true, shift: true },
+    action: 'moveActiveTask:right',
+    global: true,
+  },
+  {
+    id: 'app.task.reorder-left-linux',
+    layer: 'app',
+    category: 'Tasks',
+    description: 'Move task left',
+    platform: 'linux',
+    key: 'ArrowLeft',
+    modifiers: { alt: true, shift: true },
+    action: 'moveActiveTask:left',
+    global: true,
+  },
+  {
+    id: 'app.task.reorder-right-linux',
+    layer: 'app',
+    category: 'Tasks',
+    description: 'Move task right',
+    platform: 'linux',
+    key: 'ArrowRight',
+    modifiers: { alt: true, shift: true },
     action: 'moveActiveTask:right',
     global: true,
   },
