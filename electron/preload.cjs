@@ -70,8 +70,10 @@ const ALLOWED_CHANNELS = new Set([
   '__window_resized',
   '__window_moved',
   '__window_close_requested',
+  '__window_close_handling',
   // Dialog
   '__dialog_confirm',
+  '__dialog_choice',
   '__dialog_open',
   // Shell
   '__shell_reveal',

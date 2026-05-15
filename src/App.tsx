@@ -4,7 +4,8 @@ import { onMount, onCleanup, createEffect, Show, ErrorBoundary, createSignal } f
 import { invoke } from './lib/ipc';
 import { IPC } from '../electron/ipc/channels';
 import { appWindow } from './lib/window';
-import { confirm } from './lib/dialog';
+import { choice } from './lib/dialog';
+import { CLOSE_DIALOG_BUTTONS, resolveCloseChoice } from './lib/close-decision';
 import { Sidebar } from './components/Sidebar';
 import { TilingLayout } from './components/TilingLayout';
 import { NewTaskDialog } from './components/NewTaskDialog';
@@ -434,24 +435,28 @@ function App() {
           runningCount === 1
             ? '1 running terminal session'
             : `${runningCount} running terminal sessions`;
-        const shouldKill = await confirm(
-          `You have ${countLabel}. They can be restored on app restart. Kill them and quit, or keep them alive in the background?`,
+        const selected = await choice(
+          `You have ${countLabel}. They can be restored on app restart. Kill them and quit, keep them alive in the background, or cancel?`,
           {
             title: 'Running Terminals',
             kind: 'warning',
-            okLabel: 'Kill & Quit',
-            cancelLabel: 'Keep in Background',
+            buttons: [...CLOSE_DIALOG_BUTTONS],
+            defaultId: 2,
+            cancelId: 2,
           },
-        ).catch(() => false);
+        ).catch(() => 2);
 
-        if (shouldKill) {
+        const action = resolveCloseChoice(selected);
+        if (action === 'kill') {
           await invoke(IPC.KillAllAgents).catch(console.error);
           allowClose = true;
           await appWindow.close().catch(console.error);
           return;
         }
-
-        await appWindow.hide().catch(console.error);
+        if (action === 'background') {
+          await appWindow.hide().catch(console.error);
+        }
+        // 'abort': close already prevented above — leave the window open.
       } finally {
         handlingClose = false;
       }

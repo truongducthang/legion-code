@@ -856,6 +856,18 @@ export function registerAllHandlers(win: BrowserWindow): void {
     return result.response === 0;
   });
 
+  ipcMain.handle(IPC.DialogChoice, async (_e, args) => {
+    const result = await dialog.showMessageBox(win, {
+      type: args.kind === 'warning' ? 'warning' : 'question',
+      title: args.title || 'Confirm',
+      message: args.message,
+      buttons: args.buttons,
+      defaultId: args.defaultId ?? 0,
+      cancelId: args.cancelId ?? args.buttons.length - 1,
+    });
+    return result.response;
+  });
+
   ipcMain.handle(IPC.DialogOpen, async (_e, args) => {
     const properties: Array<'openDirectory' | 'openFile' | 'multiSelections'> = [];
     if (args?.directory) properties.push('openDirectory');
@@ -973,16 +985,33 @@ export function registerAllHandlers(win: BrowserWindow): void {
   });
   win.on('resize', createThrottledForwarder(win, IPC.WindowResized, 100));
   win.on('move', createThrottledForwarder(win, IPC.WindowMoved, 100));
+  // Fallback timer that force-destroys the window if the renderer never
+  // responds to a close request (e.g. it crashed). Cleared once the renderer
+  // acks that it is handling the close interactively (showing a dialog), so a
+  // user deliberating over that dialog isn't force-quit out from under it.
+  let forceCloseTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearForceCloseTimer = (): void => {
+    if (forceCloseTimer) {
+      clearTimeout(forceCloseTimer);
+      forceCloseTimer = undefined;
+    }
+  };
+  ipcMain.handle(IPC.WindowCloseHandling, clearForceCloseTimer);
+
   win.on('close', (e) => {
     e.preventDefault();
     if (!win.isDestroyed()) {
       win.webContents.send(IPC.WindowCloseRequested);
       // Fallback: force-close if renderer doesn't respond within 5 seconds.
-      // If the renderer calls WindowForceClose first, win.isDestroyed()
-      // will be true and this is a no-op.
-      setTimeout(() => {
+      // Cleared by WindowCloseHandling if the renderer takes over the close
+      // interactively. If the renderer calls WindowForceClose first,
+      // win.isDestroyed() will be true and this is a no-op.
+      clearForceCloseTimer();
+      forceCloseTimer = setTimeout(() => {
         if (!win.isDestroyed()) win.destroy();
       }, 5_000);
     }
   });
+
+  win.on('closed', clearForceCloseTimer);
 }
