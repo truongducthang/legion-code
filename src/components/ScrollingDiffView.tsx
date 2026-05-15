@@ -575,6 +575,7 @@ function FileSection(props: {
           background: `color-mix(in srgb, ${theme.bgElevated} 96%, white)`,
           'border-bottom': `1px solid ${theme.border}`,
           cursor: 'pointer',
+          'user-select': 'none',
         }}
       >
         {/* Collapse indicator */}

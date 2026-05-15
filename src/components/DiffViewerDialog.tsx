@@ -261,6 +261,7 @@ function DiffViewerContent(props: DiffViewerDialogProps) {
           padding: `${headerPaddingTop} 20px 12px`,
           'border-bottom': `1px solid ${theme.border}`,
           'flex-shrink': '0',
+          'user-select': 'none',
         }}
       >
         <div
@@ -426,6 +427,7 @@ function DiffViewerContent(props: DiffViewerDialogProps) {
               display: 'flex',
               'align-items': 'center',
               gap: '6px',
+              'user-select': 'none',
             }}
           >
             Changed Files

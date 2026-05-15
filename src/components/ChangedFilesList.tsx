@@ -489,6 +489,7 @@ export function ChangedFilesList(props: ChangedFilesListProps) {
         'font-family': "'JetBrains Mono', monospace",
         'font-size': sf(12),
         outline: 'none',
+        'user-select': 'none',
       }}
     >
       <div style={{ flex: '1', overflow: 'auto', padding: '4px 0' }}>
