@@ -1771,6 +1771,11 @@ body.dragging-task * {
   cursor: pointer;
   opacity: 0.7;
   pointer-events: auto;
+  /* Carve the dots out of the OS window-drag region. On Linux the titlebar's
+     [data-tauri-drag-region] is a sibling the dots overlay (not an ancestor),
+     so main.ts's injected `[data-tauri-drag-region] button { no-drag }` rule
+     can't reach them and the drag region swallows the click. */
+  -webkit-app-region: no-drag;
 }
 
 .focus-mode-task-indicator::before {
