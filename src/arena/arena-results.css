@@ -202,7 +202,7 @@
 }
 
 .arena-merge-btn:hover:not(:disabled) {
-  background: var(--accent-hover);
+  background: var(--accent-hover-bg, var(--accent-hover));
 }
 
 .arena-merge-btn:disabled {

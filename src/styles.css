@@ -166,14 +166,14 @@ html[data-look='classic'] {
   --bg-selected-subtle: #3e508a33;
   --border: #393b3f;
   --border-subtle: #2d2e32;
-  --border-focus: #4267ff;
+  --border-focus: #5d80ff;
   --fg: #cccdd2;
   --fg-muted: #8b8d93;
   --fg-subtle: #6d7076;
   --accent: #4267ff;
   --accent-hover: #3a5bff;
   --accent-text: #ffffff;
-  --link: #6b8aff;
+  --link: #6f8eff;
   --success: #0dbc79;
   --error: #f75464;
   --warning: #f2c55c;
@@ -425,6 +425,7 @@ html[data-look='islands-dark'] {
   --fg-subtle: #7a7e85;
   --accent: #286cf5;
   --accent-hover: #6d9df8;
+  --accent-hover-bg: #2468f2;
   --accent-text: #ffffff;
   --link: #6d9df8;
   --success: #6aab73;
@@ -454,9 +455,9 @@ html[data-look='islands-light'] {
   --fg-muted: #5e6066;
   --fg-subtle: #8d9199;
   --accent: #2c6def;
-  --accent-hover: #5a8dff;
+  --accent-hover: #245fe0;
   --accent-text: #ffffff;
-  --link: #3574f0;
+  --link: #2c6def;
   --success: #369650;
   --error: #d62b40;
   --warning: #a98708;
@@ -1035,7 +1036,7 @@ textarea::placeholder {
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover) !important;
+  background: var(--accent-hover-bg, var(--accent-hover)) !important;
   box-shadow: var(--shadow-pop);
 }
 

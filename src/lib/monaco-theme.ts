@@ -30,7 +30,7 @@ const presetColors: Record<LookPreset, PresetColors> = {
     fgMuted: '#8b8d93',
     fgSubtle: '#6d7076',
     border: '#393b3f',
-    accent: '#4c6fff',
+    accent: '#4267ff',
   },
   graphite: graphiteColors,
   midnight: {
@@ -91,7 +91,7 @@ const presetColors: Record<LookPreset, PresetColors> = {
     fgMuted: '#9a9da4',
     fgSubtle: '#7a7e85',
     border: '#2c2f34',
-    accent: '#548af7',
+    accent: '#286cf5',
   },
   'islands-light': {
     bgElevated: '#ffffff',
@@ -99,7 +99,7 @@ const presetColors: Record<LookPreset, PresetColors> = {
     fgMuted: '#5e6066',
     fgSubtle: '#8d9199',
     border: '#d3d5db',
-    accent: '#3574f0',
+    accent: '#2c6def',
     base: 'vs',
   },
   workbench: {
