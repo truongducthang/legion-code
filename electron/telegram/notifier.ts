@@ -316,6 +316,27 @@ export class Notifier {
     return true;
   }
 
+  /** Called from `onRendererStateSaved` when one or more projects flip
+   *  `telegramOptIn` from true → false. Closes every live tail for those
+   *  projects' active agents and clears any in-flight rate-limiter entries
+   *  so revoked consent is honoured immediately. */
+  async handleOptedOutProjects(projectIds: string[]): Promise<void> {
+    if (projectIds.length === 0) return;
+    const set = new Set(projectIds);
+    const affected: string[] = [];
+    for (const agentId of getActiveAgentIds()) {
+      const meta = getAgentMeta(agentId);
+      if (!meta) continue;
+      const project = getProjectByAgentMeta(meta);
+      if (project && set.has(project.id)) affected.push(agentId);
+    }
+    if (affected.length === 0) return;
+    for (const agentId of affected) {
+      this.limiter.clearPendingForAgent(agentId);
+    }
+    await this.tails.closeAgents(affected, 'project opted out');
+  }
+
   /* --- diff / status helpers used by commands.ts --- */
 
   formatScrollbackForReply(agentId: string, scrollbackBase64: string, lines: number): string {

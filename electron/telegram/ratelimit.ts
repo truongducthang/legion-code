@@ -158,6 +158,28 @@ export class RateLimiter {
     return entry.payload as T;
   }
 
+  /** Drop every pending entry for the given agent across all chats. Used when
+   *  a project's `telegramOptIn` flips off so in-flight notifications for the
+   *  project's agents do not reach Telegram after the user revoked consent.
+   *  Also clears any sustained-drop streaks so a later re-opt-in does not
+   *  immediately trip the PTY-pause threshold from stale state. */
+  clearPendingForAgent(agentId: string): number {
+    let cleared = 0;
+    const suffix = `:${agentId}`;
+    for (const key of [...this.pending.keys()]) {
+      if (key.endsWith(suffix)) {
+        this.pending.delete(key);
+        cleared++;
+      }
+    }
+    for (const key of [...this.dropStartedAt.keys()]) {
+      if (key.endsWith(suffix)) {
+        this.dropStartedAt.delete(key);
+      }
+    }
+    return cleared;
+  }
+
   /** Current chat capacity (visible for tests and debug). */
   chatCapacity(chatId: number): number {
     return this.chats.get(chatId)?.capacity ?? PER_CHAT_CAPACITY;

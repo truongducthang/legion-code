@@ -1,3 +1,4 @@
+import { createEffect } from 'solid-js';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { setStore, store } from './core';
@@ -119,6 +120,18 @@ export async function pushFocusedAgent(agentId: string | null): Promise<void> {
   } catch (err) {
     console.warn('pushFocusedAgent failed:', err);
   }
+}
+
+/** Install a reactive effect that mirrors `store.activeAgentId` into main's
+ *  focused-agent cache whenever it changes. Call once from the app bootstrap. */
+export function setupFocusedAgentSync(): void {
+  let last: string | null | undefined;
+  createEffect(() => {
+    const current = store.activeAgentId;
+    if (current === last) return;
+    last = current;
+    void pushFocusedAgent(current);
+  });
 }
 
 export async function setTelegramAutoTunnel(autoTunnel: boolean): Promise<void> {

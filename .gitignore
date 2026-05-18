@@ -10,7 +10,7 @@ coverage
 .idea
 .claude
 .DS_Store
-# docs/
+docs/
 
 # Sandbox bind-mount artifacts from user home (not project files).
 # Root-anchored so legitimate nested files with these names are still tracked.
@@ -24,5 +24,5 @@ coverage
 /.zprofile
 /.zshrc
 
-# .ai-devkit.json
-# fullstack-engineer.yaml
+.ai-devkit.json
+fullstack-engineer.yaml

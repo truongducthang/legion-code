@@ -71,7 +71,7 @@ async function handleApproveDeny(
     return;
   }
   try {
-    writeToAgent(r.agentId, action === 'approve' ? 'y\n' : 'n\n');
+    writeToAgent(r.agentId, action === 'approve' ? 'y\r' : 'n\r');
     await answerToast(ctx, action === 'approve' ? 'Approved.' : 'Denied.');
     const user = ctx.from?.username ?? ctx.from?.first_name ?? 'someone';
     await appendNote(ctx, `${action} by ${user}`);

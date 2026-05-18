@@ -108,19 +108,41 @@ function coerceTasks(raw: unknown): Map<string, TaskInfo> {
   return out;
 }
 
-export function setStateBlob(json: string): void {
+export interface StateDiff {
+  /** Project ids whose `telegramOptIn` flipped from `true` to `false` since
+   *  the previous snapshot. Callers use this to close in-flight tails and
+   *  clear pending rate-limiter entries for the project's agents. */
+  optedOutProjectIds: string[];
+}
+
+export function setStateBlob(json: string): StateDiff {
+  const prev = projects;
   try {
     const parsed = JSON.parse(json) as { projects?: unknown; tasks?: unknown };
     projects = coerceProjects(parsed.projects);
     tasks = coerceTasks(parsed.tasks);
   } catch {
     /* leave caches untouched on parse failure */
+    return { optedOutProjectIds: [] };
   }
+  const optedOutProjectIds: string[] = [];
+  for (const [id, before] of prev) {
+    if (!before.telegramOptIn) continue;
+    const after = projects.get(id);
+    if (!after || !after.telegramOptIn) optedOutProjectIds.push(id);
+  }
+  return { optedOutProjectIds };
 }
 
 export function bootstrap(): void {
   const raw = loadAppState();
   if (raw) setStateBlob(raw);
+}
+
+/** Visible for tests: clear the in-memory caches. */
+export function _resetForTests(): void {
+  projects = new Map();
+  tasks = new Map();
 }
 
 export function getTaskForAgent(taskId: string): TaskInfo | null {

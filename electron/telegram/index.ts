@@ -20,6 +20,7 @@ import {
   setConfig,
 } from './config.js';
 import { bootstrap as bootstrapIntegration, setStateBlob } from './integration.js';
+import { getNotifier } from './notifier.js';
 import { verifyInitData } from './initdata.js';
 import { getTunnelStatus, probeCloudflared, startTunnel, stopTunnel } from './tunnel.js';
 import {
@@ -215,7 +216,18 @@ export function setFocusedAgentId(agentId: string | null): void {
 
 /** Called by the SaveAppState handler whenever the renderer persists state. */
 export function onRendererStateSaved(json: string): void {
-  setStateBlob(json);
+  const diff = setStateBlob(json);
+  if (diff.optedOutProjectIds.length > 0) {
+    // Honour revoked consent immediately: close live tails and clear pending
+    // rate-limiter entries for agents whose project just opted out.
+    void getNotifier()
+      ?.handleOptedOutProjects(diff.optedOutProjectIds)
+      .catch((err) => {
+        logWarn('telegram.index', 'opt-out cleanup failed', {
+          msg: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
   try {
     const parsed = JSON.parse(json) as { telegram?: unknown };
     if (parsed.telegram) {

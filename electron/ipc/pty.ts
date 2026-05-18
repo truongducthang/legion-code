@@ -128,8 +128,8 @@ export function validateCommand(command: string): void {
   if (!command || !command.trim()) {
     throw new Error('Command must not be empty.');
   }
-  // Absolute paths: check directly via filesystem
-  if (command.startsWith('/')) {
+  // Absolute paths (unix `/...` or windows `C:\...`): check directly via filesystem
+  if (path.isAbsolute(command)) {
     try {
       fs.accessSync(command, fs.constants.X_OK);
       return;
@@ -139,9 +139,10 @@ export function validateCommand(command: string): void {
       );
     }
   }
-  // Bare names: resolve via `which` (execFileSync — no shell interpolation)
+  // Bare names: resolve via the platform's lookup command (no shell interpolation).
+  const lookup = process.platform === 'win32' ? 'where' : 'which';
   try {
-    execFileSync('which', [command], { encoding: 'utf8', timeout: 3000 });
+    execFileSync(lookup, [command], { encoding: 'utf8', timeout: 3000 });
   } catch {
     throw new Error(
       `Command '${command}' not found in PATH. Make sure it is installed and available in your terminal.`,

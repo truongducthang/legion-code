@@ -250,7 +250,7 @@ export async function onVoiceMessage(ctx: Context): Promise<void> {
 
   // Inject into the agent's PTY.
   try {
-    writeToAgent(resolved.agentId, transcript + '\n');
+    writeToAgent(resolved.agentId, transcript + '\r');
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await safeReply(ctx, escapeMd2(`Failed to write to agent: ${msg}`));

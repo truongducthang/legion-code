@@ -80,7 +80,7 @@ describe('RateLimiter — 429 handling', () => {
     const r = new RateLimiter(t0);
     r.note429(100, 0, t0);
     expect(r.chatCapacity(100)).toBe(1);
-    r.noteSuccess(100, t0 + 1_000);
+    r.noteSuccess(100);
     expect(r.chatCapacity(100)).toBe(3);
   });
 });
@@ -125,5 +125,32 @@ describe('RateLimiter — pending edit replacement', () => {
     r.setPending(100, 'agent-b', 'B');
     expect(r.takePending<string>(100, 'agent-a')).toBe('A');
     expect(r.takePending<string>(100, 'agent-b')).toBe('B');
+  });
+});
+
+describe('RateLimiter — clearPendingForAgent (opt-out)', () => {
+  it('drops pending across every chat for the named agent', () => {
+    const r = new RateLimiter(1_000_000);
+    r.setPending(100, 'agent-a', 'A');
+    r.setPending(200, 'agent-a', 'B');
+    r.setPending(100, 'agent-b', 'keep');
+    expect(r.clearPendingForAgent('agent-a')).toBe(2);
+    expect(r.takePending<string>(100, 'agent-a')).toBeNull();
+    expect(r.takePending<string>(200, 'agent-a')).toBeNull();
+    expect(r.takePending<string>(100, 'agent-b')).toBe('keep');
+  });
+
+  it('also clears in-flight sustained-drop streaks for the agent', () => {
+    const t0 = 1_000_000;
+    const r = new RateLimiter(t0);
+    r.recordDrop(100, 'agent-a', t0); // start streak
+    r.clearPendingForAgent('agent-a');
+    // Without the clear, t0+5001 would return true; now the streak restarts.
+    expect(r.recordDrop(100, 'agent-a', t0 + 5_001)).toBe(false);
+  });
+
+  it('returns 0 and is a no-op when the agent has no pending entries', () => {
+    const r = new RateLimiter(1_000_000);
+    expect(r.clearPendingForAgent('agent-x')).toBe(0);
   });
 });

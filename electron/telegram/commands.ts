@@ -112,7 +112,7 @@ async function handlePrompt(
     return;
   }
   try {
-    writeToAgent(r.agentId, body + '\n');
+    writeToAgent(r.agentId, body + '\r');
     const mid = await reply(ctx, '→ prompted');
     if (mid !== null) getNotifier()?.replyMap.register(mid, r.agentId);
     auditAndReturn(ctx, 'cmd', '/prompt', r.agentId, 'ok', null);
@@ -136,7 +136,7 @@ async function handleYesNo(
     return;
   }
   try {
-    writeToAgent(r.agentId, yes ? 'y\n' : 'n\n');
+    writeToAgent(r.agentId, yes ? 'y\r' : 'n\r');
     const mid = await reply(ctx, yes ? '→ approved' : '→ denied');
     if (mid !== null) getNotifier()?.replyMap.register(mid, r.agentId);
     auditAndReturn(ctx, 'cmd', cmd, r.agentId, 'ok', null);
@@ -375,7 +375,7 @@ async function handleRun(
     return;
   }
   try {
-    writeToAgent(r.agentId, bookmark.command + '\n');
+    writeToAgent(r.agentId, bookmark.command + '\r');
     await reply(ctx, escapeMd2(`→ ran ${bookmark.id}`));
     auditAndReturn(ctx, 'cmd', '/run', r.agentId, 'ok', bookmark.id);
   } catch (err) {
