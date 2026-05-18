@@ -7,7 +7,10 @@
 
 import { Bot, GrammyError } from 'grammy';
 import { info as logInfo, warn as logWarn, error as logError } from '../log.js';
-import { registerCommands } from './commands.js';
+import { registerCommands, handlePromptForReplyChain } from './commands.js';
+import { registerInlineCallbacks } from './inline.js';
+import { Notifier, setNotifier, getNotifier } from './notifier.js';
+import { chatAllowed } from './preamble.js';
 import { getConfig, setConfig } from './config.js';
 import { record, buildEntry } from './audit.js';
 import { TelegramError } from './types.js';
@@ -109,6 +112,22 @@ export async function startBot(token: string): Promise<{ botUsername: string }> 
   });
 
   registerCommands(bot);
+  registerInlineCallbacks(bot);
+
+  // Reply-chain: a Telegram "reply to" a tagged bot message routes back as a
+  // /prompt for the source agent without requiring an explicit `<id>`.
+  bot.on('message:text', async (ctx) => {
+    if (!chatAllowed(ctx)) return;
+    const text = ctx.message.text;
+    if (!text || text.startsWith('/')) return; // commands handled elsewhere
+    const parent = ctx.message.reply_to_message;
+    if (!parent) return;
+    const n = getNotifier();
+    if (!n) return;
+    const agentId = n.replyMap.lookup(parent.message_id);
+    if (!agentId) return;
+    await handlePromptForReplyChain(ctx, agentId, text);
+  });
 
   let botUsername: string | null = null;
   try {
@@ -128,6 +147,10 @@ export async function startBot(token: string): Promise<{ botUsername: string }> 
   }
 
   running = { bot, botUsername, startedAt: Date.now(), lastError: null };
+
+  const notifier = new Notifier(bot);
+  setNotifier(notifier);
+  notifier.start();
 
   // Fire-and-forget. The Promise returned by bot.start only resolves when the
   // bot is stopped — awaiting it here would deadlock the StartTelegramBot IPC.
@@ -163,6 +186,17 @@ export async function stopBot(): Promise<void> {
   if (!running) return;
   const r = running;
   running = null;
+  const n = getNotifier();
+  if (n) {
+    try {
+      n.stop();
+    } catch (err) {
+      logWarn('telegram.bot', 'notifier stop threw (continuing)', {
+        msg: err instanceof Error ? err.message : String(err),
+      });
+    }
+    setNotifier(null);
+  }
   try {
     await Promise.race([r.bot.stop(), new Promise<void>((resolve) => setTimeout(resolve, 5_000))]);
   } catch (err) {

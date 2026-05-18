@@ -13,6 +13,14 @@ import { debug as logDebug } from '../log.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+export interface AgentExitInfo {
+  exitCode: number;
+  signal: string | null;
+  lastOutput: string[];
+}
+
+type ExitSubscriber = (info: AgentExitInfo) => void;
+
 interface PtySession {
   proc: pty.IPty;
   channelId: string;
@@ -21,6 +29,7 @@ interface PtySession {
   isShell: boolean;
   flushTimer: ReturnType<typeof setTimeout> | null;
   subscribers: Set<(encoded: string) => void>;
+  exitSubscribers: Set<ExitSubscriber>;
   scrollback: RingBuffer;
   /** Assigned container name when running in Docker mode, null otherwise. */
   containerName: string | null;
@@ -325,6 +334,7 @@ export function spawnAgent(
     isShell: args.isShell ?? false,
     flushTimer: null,
     subscribers: new Set(),
+    exitSubscribers: new Set(),
     scrollback: new RingBuffer(),
     containerName,
   };
@@ -428,14 +438,29 @@ export function spawnAgent(
       .filter((l) => l.length > 0)
       .slice(-MAX_LINES);
 
+    const signalStr = signal !== undefined ? String(signal) : null;
     send({
       type: 'Exit',
       data: {
         exit_code: exitCode,
-        signal: signal !== undefined ? String(signal) : null,
+        signal: signalStr,
         last_output: lines,
       },
     });
+
+    const exitInfo: AgentExitInfo = {
+      exitCode,
+      signal: signalStr,
+      lastOutput: lines,
+    };
+    for (const sub of session.exitSubscribers) {
+      try {
+        sub(exitInfo);
+      } catch {
+        /* exit subscribers must not break cleanup */
+      }
+    }
+    session.exitSubscribers.clear();
 
     emitPtyEvent('exit', args.agentId, { exitCode, signal });
     sessions.delete(args.agentId);
@@ -525,6 +550,26 @@ export function subscribeToAgent(agentId: string, cb: (encoded: string) => void)
 /** Remove a previously registered output subscriber. */
 export function unsubscribeFromAgent(agentId: string, cb: (encoded: string) => void): void {
   sessions.get(agentId)?.subscribers.delete(cb);
+}
+
+/**
+ * Subscribe to the agent's exit event. The callback runs once with the same
+ * `{ exitCode, signal, lastOutput }` payload main already builds for the
+ * renderer's `Exit` event. The renderer event keeps firing unchanged.
+ *
+ * Returns `false` if the agent does not exist (already exited or never
+ * spawned); the caller should treat that as a no-op.
+ */
+export function subscribeToAgentExit(agentId: string, cb: ExitSubscriber): boolean {
+  const session = sessions.get(agentId);
+  if (!session) return false;
+  session.exitSubscribers.add(cb);
+  return true;
+}
+
+/** Remove a previously registered exit subscriber. */
+export function unsubscribeFromAgentExit(agentId: string, cb: ExitSubscriber): void {
+  sessions.get(agentId)?.exitSubscribers.delete(cb);
 }
 
 /** Get the scrollback buffer for an agent as a base64 string. */

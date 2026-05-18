@@ -6,6 +6,8 @@ import {
   setTelegramEnabled,
   setTelegramPushPolicy,
   setTelegramToken,
+  setTelegramRedactPatterns,
+  setTelegramExtraQuestionPatterns,
   addAllowedChat,
   removeAllowedChat,
   startTelegramBot,
@@ -38,9 +40,18 @@ export function TelegramSettings(props: TelegramSettingsProps) {
   const [busy, setBusy] = createSignal(false);
   const [actionError, setActionError] = createSignal<string | null>(null);
 
+  const [redactText, setRedactText] = createSignal('');
+  const [redactErr, setRedactErr] = createSignal<string | null>(null);
+  const [redactDirty, setRedactDirty] = createSignal(false);
+  const [extraQText, setExtraQText] = createSignal('');
+  const [extraQErr, setExtraQErr] = createSignal<string | null>(null);
+  const [extraQDirty, setExtraQDirty] = createSignal(false);
+
   const tokenInputId = createUniqueId();
   const chatInputId = createUniqueId();
   const enabledId = createUniqueId();
+  const redactId = createUniqueId();
+  const extraQId = createUniqueId();
 
   createEffect(() => {
     if (!props.active) return;
@@ -58,6 +69,71 @@ export function TelegramSettings(props: TelegramSettingsProps) {
       clearInterval(handle);
     });
   });
+
+  // Sync textareas with the persisted config when the dialog opens (and the
+  // user has not begun editing). Subsequent edits keep their local state until
+  // the user saves or cancels.
+  createEffect(() => {
+    if (!props.active) return;
+    if (!redactDirty()) setRedactText(store.telegram.redactPatterns.join('\n'));
+    if (!extraQDirty()) setExtraQText(store.telegram.extraQuestionPatterns.join('\n'));
+  });
+
+  function compilePatterns(
+    text: string,
+    flags: string,
+  ): { patterns: string[]; error: string | null } {
+    const lines = text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0);
+    for (let i = 0; i < lines.length; i++) {
+      try {
+        new RegExp(lines[i], flags);
+      } catch (err) {
+        return { patterns: [], error: `Line ${i + 1}: ${(err as Error).message}` };
+      }
+    }
+    return { patterns: lines, error: null };
+  }
+
+  async function handleSaveRedactions(): Promise<void> {
+    const { patterns, error } = compilePatterns(redactText(), 'g');
+    if (error) {
+      setRedactErr(error);
+      return;
+    }
+    setRedactErr(null);
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setTelegramRedactPatterns(patterns);
+      setRedactDirty(false);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveExtraQ(): Promise<void> {
+    const { patterns, error } = compilePatterns(extraQText(), 'i');
+    if (error) {
+      setExtraQErr(error);
+      return;
+    }
+    setExtraQErr(null);
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setTelegramExtraQuestionPatterns(patterns);
+      setExtraQDirty(false);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function handleSetToken(): Promise<void> {
     const trimmed = tokenInput().trim();
@@ -395,6 +471,98 @@ export function TelegramSettings(props: TelegramSettingsProps) {
             )}
           </For>
         </div>
+      </div>
+
+      {/* Redaction patterns */}
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+        <label for={redactId} style={{ 'font-size': '13px', color: theme.fg }}>
+          Redaction patterns
+        </label>
+        <textarea
+          id={redactId}
+          value={redactText()}
+          rows={4}
+          disabled={busy()}
+          onInput={(e) => {
+            setRedactText(e.currentTarget.value);
+            setRedactDirty(true);
+            setRedactErr(null);
+          }}
+          placeholder="One JavaScript regex per line, e.g. ^password:\s*\S+$"
+          style={{
+            padding: '6px 8px',
+            'border-radius': '6px',
+            border: `1px solid ${redactErr() ? theme.error : theme.border}`,
+            background: theme.bgInput,
+            color: theme.fg,
+            'font-family': 'monospace',
+            'font-size': '12px',
+            resize: 'vertical',
+          }}
+        />
+        <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+          <button
+            type="button"
+            disabled={busy() || !redactDirty()}
+            onClick={() => void handleSaveRedactions()}
+            style={settingsButtonStyle(true)}
+          >
+            Save patterns
+          </button>
+          <Show when={redactErr()}>
+            <span style={{ 'font-size': '12px', color: theme.error }}>{redactErr()}</span>
+          </Show>
+        </div>
+        <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+          Best-effort redaction of agent output before it reaches Telegram. Each match is replaced
+          with <code>[REDACTED:user-N]</code>. Not a security boundary.
+        </span>
+      </div>
+
+      {/* Extra question patterns */}
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '4px' }}>
+        <label for={extraQId} style={{ 'font-size': '13px', color: theme.fg }}>
+          Extra question patterns
+        </label>
+        <textarea
+          id={extraQId}
+          value={extraQText()}
+          rows={3}
+          disabled={busy()}
+          onInput={(e) => {
+            setExtraQText(e.currentTarget.value);
+            setExtraQDirty(true);
+            setExtraQErr(null);
+          }}
+          placeholder="One case-insensitive regex per line, e.g. ^awaiting input:\s*$"
+          style={{
+            padding: '6px 8px',
+            'border-radius': '6px',
+            border: `1px solid ${extraQErr() ? theme.error : theme.border}`,
+            background: theme.bgInput,
+            color: theme.fg,
+            'font-family': 'monospace',
+            'font-size': '12px',
+            resize: 'vertical',
+          }}
+        />
+        <div style={{ display: 'flex', gap: '6px', 'align-items': 'center' }}>
+          <button
+            type="button"
+            disabled={busy() || !extraQDirty()}
+            onClick={() => void handleSaveExtraQ()}
+            style={settingsButtonStyle(true)}
+          >
+            Save patterns
+          </button>
+          <Show when={extraQErr()}>
+            <span style={{ 'font-size': '12px', color: theme.error }}>{extraQErr()}</span>
+          </Show>
+        </div>
+        <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+          Patterns added here are checked alongside the built-in question detectors. False positives
+          wake you up — keep matches narrow.
+        </span>
       </div>
 
       {/* Status + manual start/stop */}

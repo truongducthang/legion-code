@@ -67,6 +67,8 @@ export function updateProject(
       | 'coverageReportPath'
       | 'terminalBookmarks'
       | 'isGitRepo'
+      | 'telegramOptIn'
+      | 'telegramPauseOnBackpressure'
     >
   >,
 ): void {
@@ -89,6 +91,10 @@ export function updateProject(
       if (updates.terminalBookmarks !== undefined)
         s.projects[idx].terminalBookmarks = updates.terminalBookmarks;
       if (updates.isGitRepo !== undefined) s.projects[idx].isGitRepo = updates.isGitRepo;
+      if (updates.telegramOptIn !== undefined)
+        s.projects[idx].telegramOptIn = updates.telegramOptIn;
+      if (updates.telegramPauseOnBackpressure !== undefined)
+        s.projects[idx].telegramPauseOnBackpressure = updates.telegramPauseOnBackpressure;
     }),
   );
 }

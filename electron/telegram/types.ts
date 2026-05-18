@@ -78,6 +78,31 @@ export interface AuditEntry {
   detail: string | null;
 }
 
+/** Notification categories the rate limiter routes through pushPolicy. */
+export type NotificationCategory = 'question' | 'idle' | 'error' | 'tail';
+
+/** A detected question match keyed by agent id and pattern id. */
+export interface QuestionMatch {
+  agentId: string;
+  patternId: string;
+  tailLine: string;
+  matchedAt: number;
+}
+
+/** Per-agent exit payload mirrored from electron/ipc/pty.ts. */
+export interface ExitInfo {
+  exitCode: number;
+  signal: string | null;
+  lastOutput: string[];
+}
+
+/** A handle returned by openLiveTail for a (chat, agent) tail subscription. */
+export interface LiveTailHandle {
+  chatId: number;
+  agentId: string;
+  close(reason: string): Promise<void>;
+}
+
 export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {
   enabled: false,
   allowedChatIds: [],

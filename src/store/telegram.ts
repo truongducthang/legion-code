@@ -103,6 +103,14 @@ export async function setTelegramToken(token: string): Promise<void> {
   await applyTelegramConfig({ token });
 }
 
+export async function setTelegramRedactPatterns(patterns: string[]): Promise<void> {
+  await applyTelegramConfig({ config: { redactPatterns: patterns } });
+}
+
+export async function setTelegramExtraQuestionPatterns(patterns: string[]): Promise<void> {
+  await applyTelegramConfig({ config: { extraQuestionPatterns: patterns } });
+}
+
 /** Push the renderer's `activeAgentId` to main so voice / reply-chain
  *  routing can fall back to the focused agent when no `<id>` is provided. */
 export async function pushFocusedAgent(agentId: string | null): Promise<void> {

@@ -68,3 +68,65 @@ against the actual delivery batches.
 - Voice / cloudflared sections in Settings UI (slice 3)
 - Test suite (slice 2 ships the unit tests for the modules implemented
   in slices 1 + 2 together)
+
+## Slice 2 delivery checklist (this branch)
+
+- [x] `electron/ipc/pty.ts` — new `AgentExitInfo` export, per-session
+      `exitSubscribers` set, `subscribeToAgentExit` /
+      `unsubscribeFromAgentExit` helpers, exit fan-out alongside the
+      renderer `Exit` event
+- [x] `electron/telegram/types.ts` — add `QuestionMatch`, `ExitInfo`,
+      `LiveTailHandle`, `NotificationCategory`
+- [x] `electron/telegram/ratelimit.ts` — per-chat + global token buckets,
+      429 capacity halving, sustained-drop tracker, pending-edit replacer
+- [x] `electron/telegram/reply.ts` — 2 000-entry LRU `message_id → agentId`
+      with touch-on-lookup, `forgetAgent` cleanup on exit
+- [x] `electron/telegram/livetail.ts` — `LiveTailHandle` with 1 s coalesce,
+      3 900-char rotation, footer-on-close, optional PTY backpressure
+      pause/resume; `LiveTailRegistry` with per-chat cap (default 3)
+- [x] `electron/telegram/detector.ts` — 4 base patterns + extra-question
+      user patterns, 30 s per-pattern suppression, 8 KB rolling tail,
+      base64 decode
+- [x] `electron/telegram/idle.ts` — `idle → active → idle` state machine,
+      5 min active threshold, 60 s silence trigger, one-shot per active
+      span, exit resets state
+- [x] `electron/telegram/preamble.ts` — shared chat-allowed / agent-resolve /
+      audit helpers used by both commands and inline callbacks
+- [x] `electron/telegram/inline.ts` — `approve:<id>`, `deny:<id>`,
+      `open:<id>` callbacks; appended `— approved by <user>` audit
+      footer; `web_app` button gated on `publicBaseUrl`
+- [x] `electron/telegram/notifier.ts` — orchestrator that owns detector,
+      idle, limiter, reply map, tail registry; subscribes to PTY
+      lifecycle events; pushes question / idle / exit notifications
+      through the limiter; honors `pushPolicy` per category
+- [x] `electron/telegram/commands.ts` — slice 2 commands (`/diff /tail
+/untail /steps /cov /run /ask`) plus aliases `/t /u`, expanded
+      `/help` body
+- [x] `electron/telegram/bot.ts` — wires `registerInlineCallbacks`,
+      reply-chain `message:text` handler, notifier `start()` / `stop()`
+- [x] `electron/telegram/integration.ts` — projects cache now exposes
+      `path`, `coverageReportPath`, `terminalBookmarks` plus
+      `getProjectByAgentMeta` / `getWorktreeByAgentMeta` helpers
+- [x] `src/store/telegram.ts` — `setTelegramRedactPatterns` /
+      `setTelegramExtraQuestionPatterns` IPC helpers
+- [x] `src/store/projects.ts` — `updateProject` now accepts
+      `telegramOptIn` and `telegramPauseOnBackpressure`
+- [x] `src/components/EditProjectDialog.tsx` — opt-in checkboxes for
+      project-level Telegram access and backpressure pause
+- [x] `src/components/TelegramSettings.tsx` — redaction-patterns and
+      extra-question-patterns textareas with per-line compile validation
+- [x] Unit tests: `ratelimit`, `reply`, `livetail`, `detector`, `idle`,
+      `redact`, `formatter` (63 telegram tests; 580 repo-wide vitest)
+- [x] Verification: `npm run check` (typecheck + eslint + prettier) and
+      `npm run test` all green
+
+## Out of scope for slice 2
+
+- Mini App `initData` auth + POST `/api/telegram-auth` (slice 3)
+- cloudflared auto-tunnel (slice 3)
+- Voice transcription (slice 3)
+- Document / photo upload to PTY paste (slice 3)
+- README "Remote control via Telegram" section (slice 3)
+- `openspec validate --all --strict` enforcement and pty.test integration
+  coverage for the new exit subscriber surface (slice 3 will add an
+  integration test against a real spawned PTY)

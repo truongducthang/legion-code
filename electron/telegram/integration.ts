@@ -15,6 +15,9 @@ import { loadAppState } from '../ipc/persistence.js';
 interface PersistedProject {
   id: string;
   name: string;
+  path?: string;
+  coverageReportPath?: string;
+  terminalBookmarks?: Array<{ id?: unknown; command?: unknown }>;
   telegramOptIn?: boolean;
   telegramPauseOnBackpressure?: boolean;
 }
@@ -27,14 +30,22 @@ interface PersistedTask {
   worktreePath?: string;
 }
 
-interface ProjectInfo {
+export interface TerminalBookmarkInfo {
+  id: string;
+  command: string;
+}
+
+export interface ProjectInfo {
   id: string;
   name: string;
+  path: string | null;
+  coverageReportPath: string | null;
+  terminalBookmarks: TerminalBookmarkInfo[];
   telegramOptIn: boolean;
   telegramPauseOnBackpressure: boolean;
 }
 
-interface TaskInfo {
+export interface TaskInfo {
   id: string;
   name: string;
   projectId: string;
@@ -48,6 +59,18 @@ function coerceBool(v: unknown): boolean {
   return v === true;
 }
 
+function coerceBookmarks(raw: unknown): TerminalBookmarkInfo[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TerminalBookmarkInfo[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const e = entry as { id?: unknown; command?: unknown };
+    if (typeof e.id !== 'string' || typeof e.command !== 'string') continue;
+    out.push({ id: e.id, command: e.command });
+  }
+  return out;
+}
+
 function coerceProjects(raw: unknown): Map<string, ProjectInfo> {
   const out = new Map<string, ProjectInfo>();
   if (!Array.isArray(raw)) return out;
@@ -58,6 +81,9 @@ function coerceProjects(raw: unknown): Map<string, ProjectInfo> {
     out.set(pp.id, {
       id: pp.id,
       name: pp.name,
+      path: typeof pp.path === 'string' ? pp.path : null,
+      coverageReportPath: typeof pp.coverageReportPath === 'string' ? pp.coverageReportPath : null,
+      terminalBookmarks: coerceBookmarks(pp.terminalBookmarks),
       telegramOptIn: coerceBool(pp.telegramOptIn),
       telegramPauseOnBackpressure: coerceBool(pp.telegramPauseOnBackpressure),
     });
@@ -103,4 +129,20 @@ export function getTaskForAgent(taskId: string): TaskInfo | null {
 
 export function getProjectForTask(projectId: string): ProjectInfo | null {
   return projects.get(projectId) ?? null;
+}
+
+/** Convenience: resolve `agentId → project` via the agent's task. Requires
+ *  pty's `getAgentMeta` to know about the agent. */
+export function getProjectByAgentMeta(meta: { taskId: string }): ProjectInfo | null {
+  const task = tasks.get(meta.taskId);
+  if (!task) return null;
+  return projects.get(task.projectId) ?? null;
+}
+
+export function getWorktreeByAgentMeta(meta: { taskId: string }): string | null {
+  return tasks.get(meta.taskId)?.worktreePath ?? null;
+}
+
+export function getAllProjects(): ProjectInfo[] {
+  return Array.from(projects.values());
 }
