@@ -230,6 +230,10 @@ export function TelegramSettings(props: TelegramSettingsProps) {
       setChatInputErr('Chat id must be a non-zero integer.');
       return;
     }
+    if (store.telegram.allowedChatIds.includes(parsed)) {
+      setChatInputErr('Chat id already added.');
+      return;
+    }
     setChatInputErr(null);
     setBusy(true);
     setActionError(null);
@@ -833,7 +837,13 @@ export function TelegramSettings(props: TelegramSettingsProps) {
       </div>
 
       {/* Voice prompts */}
-      <Show when={store.telegram.enabled && store.telegram.allowedChatIds.length > 0}>
+      <Show
+        when={
+          store.telegram.enabled &&
+          store.telegramHasToken &&
+          store.telegram.allowedChatIds.length > 0
+        }
+      >
         <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
           <span style={{ 'font-size': '13px', color: theme.fg, 'font-weight': '500' }}>
             Voice prompts

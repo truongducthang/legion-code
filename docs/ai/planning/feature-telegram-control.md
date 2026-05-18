@@ -272,12 +272,14 @@ allowedChatIds, nowMs?): TelegramInitData`. Parses URL-encoded
       `npx --yes @fission-ai/openspec validate --all --strict`. All
       10 items pass strict validation including
       `change/add-telegram-control`.
-- [ ] `electron/ipc/pty.test.ts` integration case for
-      `subscribeToAgentExit` against a real spawned PTY — DEFERRED to a
-      follow-up. The exit subscriber surface has inline coverage via
-      `livetail.test.ts` (with an injected subscribe stub) from slice 2;
-      a real-PTY integration test is best handled in a dedicated CI job
-      so the unit-test suite stays fast and flake-free.
+- [x] `electron/ipc/pty.test.ts` — added a `subscribeToAgentExit`
+      describe block with 6 mock-PTY cases (single-fire payload,
+      numeric-signal coercion to string, unsubscribe path, renderer
+      `Exit` event still fires alongside subscribers, unknown agent
+      returns `false`, multi-subscriber fan-out). The exit-subscriber
+      surface now has direct unit coverage; a real-spawned-PTY
+      integration test remains a future enhancement for a dedicated
+      CI job, but every spec scenario for the surface is asserted here.
 - [x] `npm run typecheck` and `npm run lint` are both green.
       `vitest run electron/telegram/ electron/remote/server.test.ts`
       reports 96 / 96 passing (63 from slices 1–2 plus 33 new from

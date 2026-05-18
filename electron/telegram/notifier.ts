@@ -26,6 +26,8 @@ import {
   getActiveAgentIds,
   getAgentMeta,
   onPtyEvent,
+  pauseAgent,
+  resumeAgent,
   type AgentExitInfo,
 } from '../ipc/pty.js';
 import { getConfig } from './config.js';
@@ -287,6 +289,8 @@ export class Notifier {
         });
       },
       registerForReplyChain: (messageId, agentId) => this.replyMap.register(messageId, agentId),
+      pauseAgent: (agentId) => pauseAgent(agentId),
+      resumeAgent: (agentId) => resumeAgent(agentId),
     };
   }
 
