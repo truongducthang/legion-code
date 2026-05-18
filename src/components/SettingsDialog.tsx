@@ -31,6 +31,7 @@ import {
   setDarkTheme,
 } from '../store/store';
 import { CustomAgentEditor } from './CustomAgentEditor';
+import { TelegramSettings } from './TelegramSettings';
 import { mod } from '../lib/platform';
 import { DEFAULT_DOCKER_IMAGE, PROJECT_DOCKERFILE_RELATIVE_PATH } from '../lib/docker';
 
@@ -722,6 +723,8 @@ export function SettingsDialog(props: SettingsDialogProps) {
               </span>
             </Show>
           </div>
+
+          <TelegramSettings active={props.open} />
 
           <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
             <div style={{ ...sectionLabelStyle, 'font-weight': '600' }}>Diagnostics</div>

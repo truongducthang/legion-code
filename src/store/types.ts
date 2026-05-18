@@ -35,6 +35,12 @@ export interface Project {
   coverageReportPath?: string;
   terminalBookmarks?: TerminalBookmark[];
   isGitRepo?: boolean; // undefined treated as true for backward compat
+  /** Per-project opt-in for Telegram control. Default false. The bot refuses
+   *  to attach to a project whose flag is false. */
+  telegramOptIn?: boolean;
+  /** When true, sustained Telegram tail backpressure pauses the agent's PTY.
+   *  Default false. Only meaningful when `telegramOptIn === true`. */
+  telegramPauseOnBackpressure?: boolean;
 }
 
 export interface Agent {
@@ -141,7 +147,43 @@ export interface PersistedWindowState {
   maximized: boolean;
 }
 
+export type TelegramPushPolicy = 'all' | 'questions-only' | 'errors-only';
+export type TelegramVoiceRuntime = 'none' | 'whisper-cpp' | 'openai';
+
+export interface PersistedTelegramConfig {
+  enabled: boolean;
+  allowedChatIds: number[];
+  pushPolicy: TelegramPushPolicy;
+  redactPatterns: string[];
+  extraQuestionPatterns: string[];
+  publicBaseUrl: string | null;
+  autoTunnel: boolean;
+  cloudflaredPath: string | null;
+  voice: {
+    runtime: TelegramVoiceRuntime;
+    whisperCppPath: string | null;
+  };
+}
+
+export const DEFAULT_TELEGRAM_PERSISTED: PersistedTelegramConfig = {
+  enabled: false,
+  allowedChatIds: [],
+  pushPolicy: 'questions-only',
+  redactPatterns: [],
+  extraQuestionPatterns: [],
+  publicBaseUrl: null,
+  autoTunnel: false,
+  cloudflaredPath: null,
+  voice: { runtime: 'none', whisperCppPath: null },
+};
+
+/** Current PersistedState schema version. Bumped to 2 when the telegram
+ *  block was added; unversioned snapshots are treated as version 1. */
+export const PERSISTENCE_VERSION = 2;
+
 export interface PersistedState {
+  /** Schema version. Missing/older treated as 1; written as PERSISTENCE_VERSION. */
+  persistenceVersion?: number;
   projects: Project[];
   lastProjectId: string | null;
   lastAgentId: string | null;
@@ -185,6 +227,9 @@ export interface PersistedState {
   lightThemeCustomId?: string | null;
   darkThemePreset?: LookPreset;
   darkThemeCustomId?: string | null;
+  /** Non-secret Telegram bot config. Bot token and OpenAI API key are NOT
+   *  here — they live in the main process via Electron `safeStorage`. */
+  telegram?: PersistedTelegramConfig;
 }
 
 // Panel cell IDs. Shell terminals use "shell:0", "shell:1", etc.
@@ -277,4 +322,6 @@ export interface AppStore {
   lightThemeCustomId: string | null;
   darkThemePreset: LookPreset;
   darkThemeCustomId: string | null;
+  telegram: PersistedTelegramConfig;
+  telegramHasToken: boolean;
 }
