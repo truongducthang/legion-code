@@ -1,0 +1,45 @@
+{
+  "version": "0.31.0",
+  "environments": ["claude"],
+  "phases": [
+    "requirements",
+    "design",
+    "planning",
+    "implementation",
+    "testing",
+    "deployment",
+    "monitoring"
+  ],
+  "createdAt": "2026-05-18T09:07:16.022Z",
+  "updatedAt": "2026-05-18T09:07:23.435Z",
+  "skills": [
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "dev-lifecycle"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "agent-orchestration"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "memory"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "simplify-implementation"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "technical-writer"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "verify"
+    },
+    {
+      "registry": "codeaholicguy/ai-devkit",
+      "name": "tdd"
+    }
+  ]
+}
