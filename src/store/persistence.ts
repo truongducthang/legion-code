@@ -10,9 +10,13 @@ import type {
   Task,
   PersistedState,
   PersistedTask,
+  PersistedTelegramConfig,
   PersistedWindowState,
   Project,
+  TelegramPushPolicy,
+  TelegramVoiceRuntime,
 } from './types';
+import { DEFAULT_TELEGRAM_PERSISTED, PERSISTENCE_VERSION } from './types';
 import type { AgentDef } from '../ipc/types';
 import { inferDockerSource } from '../lib/docker';
 import { DEFAULT_TERMINAL_FONT } from '../lib/fonts';
@@ -82,8 +86,66 @@ function validAgentIndex(value: unknown): number | undefined {
     : undefined;
 }
 
+function isTelegramPushPolicy(v: unknown): v is TelegramPushPolicy {
+  return v === 'all' || v === 'questions-only' || v === 'errors-only';
+}
+
+function isTelegramVoiceRuntime(v: unknown): v is TelegramVoiceRuntime {
+  return v === 'none' || v === 'whisper-cpp' || v === 'openai';
+}
+
+function coerceTelegramAllowedChatIds(v: unknown): number[] {
+  if (!Array.isArray(v)) return [];
+  const seen = new Set<number>();
+  const out: number[] = [];
+  for (const x of v) {
+    if (typeof x !== 'number' || !Number.isInteger(x) || x === 0) continue;
+    if (seen.has(x)) continue;
+    seen.add(x);
+    out.push(x);
+  }
+  return out;
+}
+
+function coerceTelegramStringArray(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === 'string');
+}
+
+export function coercePersistedTelegram(raw: unknown): PersistedTelegramConfig {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...DEFAULT_TELEGRAM_PERSISTED, voice: { ...DEFAULT_TELEGRAM_PERSISTED.voice } };
+  }
+  const r = raw as Record<string, unknown>;
+  const voiceRaw =
+    r.voice && typeof r.voice === 'object' && !Array.isArray(r.voice)
+      ? (r.voice as Record<string, unknown>)
+      : {};
+  return {
+    enabled: typeof r.enabled === 'boolean' ? r.enabled : false,
+    allowedChatIds: coerceTelegramAllowedChatIds(r.allowedChatIds),
+    pushPolicy: isTelegramPushPolicy(r.pushPolicy) ? r.pushPolicy : 'questions-only',
+    redactPatterns: coerceTelegramStringArray(r.redactPatterns),
+    extraQuestionPatterns: coerceTelegramStringArray(r.extraQuestionPatterns),
+    publicBaseUrl: typeof r.publicBaseUrl === 'string' ? r.publicBaseUrl : null,
+    autoTunnel: typeof r.autoTunnel === 'boolean' ? r.autoTunnel : false,
+    cloudflaredPath: typeof r.cloudflaredPath === 'string' ? r.cloudflaredPath : null,
+    voice: {
+      runtime: isTelegramVoiceRuntime(voiceRaw.runtime) ? voiceRaw.runtime : 'none',
+      whisperCppPath: typeof voiceRaw.whisperCppPath === 'string' ? voiceRaw.whisperCppPath : null,
+    },
+  };
+}
+
+function coerceProjectTelegramFields(p: Project): void {
+  const raw = p as Project & { telegramOptIn?: unknown; telegramPauseOnBackpressure?: unknown };
+  p.telegramOptIn = raw.telegramOptIn === true;
+  p.telegramPauseOnBackpressure = raw.telegramPauseOnBackpressure === true;
+}
+
 export async function saveState(): Promise<void> {
   const persisted: PersistedState = {
+    persistenceVersion: PERSISTENCE_VERSION,
     projects: store.projects.map((p) => ({ ...p })),
     lastProjectId: store.lastProjectId,
     lastAgentId: store.lastAgentId,
@@ -125,6 +187,7 @@ export async function saveState(): Promise<void> {
     lightThemeCustomId: store.lightThemeCustomId ?? undefined,
     darkThemePreset: store.darkThemePreset !== 'islands-dark' ? store.darkThemePreset : undefined,
     darkThemeCustomId: store.darkThemeCustomId ?? undefined,
+    telegram: { ...store.telegram, voice: { ...store.telegram.voice } },
   };
 
   for (const taskId of store.taskOrder) {
@@ -342,6 +405,8 @@ interface LegacyPersistedState {
   lightThemeCustomId?: unknown;
   darkThemePreset?: unknown;
   darkThemeCustomId?: unknown;
+  telegram?: unknown;
+  persistenceVersion?: unknown;
 }
 
 export async function loadState(): Promise<void> {
@@ -388,6 +453,8 @@ export async function loadState(): Promise<void> {
       p.defaultGitIsolation = legacy.defaultDirectMode ? 'direct' : undefined;
       delete (legacy as unknown as Record<string, unknown>).defaultDirectMode;
     }
+    // Coerce Telegram opt-in fields to strict booleans.
+    coerceProjectTelegramFields(p);
   }
 
   if (projects.length === 0 && raw.projectRoot) {
@@ -498,6 +565,10 @@ export async function loadState(): Promise<void> {
         typeof raw.darkThemeCustomId === 'string' ? raw.darkThemeCustomId : null;
       s.lightThemeCustomId =
         typeof raw.lightThemeCustomId === 'string' ? raw.lightThemeCustomId : null;
+
+      // Telegram block — strict per-field coercion so corrupted state cannot
+      // silently re-enable the bot. Unversioned snapshots get default values.
+      s.telegram = coercePersistedTelegram(raw.telegram);
 
       // Backward compat: if no appearanceMode was persisted, mirror the loaded
       // themePreset into the appropriate slot.

@@ -2,6 +2,7 @@ import { createStore } from 'solid-js/store';
 import { DEFAULT_TERMINAL_FONT } from '../lib/fonts';
 import { getLocalDateKey } from '../lib/date';
 import type { AppStore } from './types';
+import { DEFAULT_TELEGRAM_PERSISTED } from './types';
 
 export const [store, setStore] = createStore<AppStore>({
   projects: [],
@@ -77,6 +78,8 @@ export const [store, setStore] = createStore<AppStore>({
   focusMode: false,
   taskSplitMode: {},
   verboseLogging: false,
+  telegram: { ...DEFAULT_TELEGRAM_PERSISTED },
+  telegramHasToken: false,
 });
 
 type CleanupPanelStore = Pick<
