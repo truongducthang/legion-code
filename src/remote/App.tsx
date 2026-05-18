@@ -20,11 +20,12 @@ export function App() {
   }
 
   onMount(() => {
-    const token = initAuth();
-    if (token) {
-      setAuthed(true);
-      connect();
-    }
+    void initAuth().then((token) => {
+      if (token) {
+        setAuthed(true);
+        connect();
+      }
+    });
   });
 
   return (

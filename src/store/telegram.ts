@@ -120,3 +120,47 @@ export async function pushFocusedAgent(agentId: string | null): Promise<void> {
     console.warn('pushFocusedAgent failed:', err);
   }
 }
+
+export async function setTelegramAutoTunnel(autoTunnel: boolean): Promise<void> {
+  await applyTelegramConfig({ config: { autoTunnel } });
+}
+
+export async function setTelegramPublicBaseUrl(publicBaseUrl: string | null): Promise<void> {
+  await applyTelegramConfig({ config: { publicBaseUrl } });
+}
+
+export async function setTelegramCloudflaredPath(cloudflaredPath: string | null): Promise<void> {
+  await applyTelegramConfig({ config: { cloudflaredPath } });
+}
+
+export async function setTelegramVoiceRuntime(
+  runtime: PersistedTelegramConfig['voice']['runtime'],
+): Promise<void> {
+  await applyTelegramConfig({
+    config: { voice: { ...store.telegram.voice, runtime } },
+  });
+}
+
+export async function setTelegramWhisperCppPath(whisperCppPath: string | null): Promise<void> {
+  await applyTelegramConfig({
+    config: { voice: { ...store.telegram.voice, whisperCppPath } },
+  });
+}
+
+export async function setTelegramOpenAiKey(openaiApiKey: string): Promise<void> {
+  await applyTelegramConfig({ openaiApiKey });
+}
+
+export interface CloudflaredProbeResult {
+  available: boolean;
+  version?: string;
+  lastError?: string;
+}
+
+export async function probeCloudflared(): Promise<CloudflaredProbeResult> {
+  try {
+    return await invoke<CloudflaredProbeResult>(IPC.ProbeCloudflared);
+  } catch (err) {
+    return { available: false, lastError: (err as Error).message };
+  }
+}

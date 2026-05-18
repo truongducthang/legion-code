@@ -130,3 +130,164 @@ against the actual delivery batches.
 - `openspec validate --all --strict` enforcement and pty.test integration
   coverage for the new exit subscriber surface (slice 3 will add an
   integration test against a real spawned PTY)
+
+## Slice 3 delivery checklist (this branch)
+
+Source of truth for each task body lives in
+[`openspec/changes/add-telegram-control/tasks.md`](../../../openspec/changes/add-telegram-control/tasks.md).
+The slice-3 deliverable closes the remaining sections there.
+
+### Mini App initData authentication
+
+- [x] `electron/telegram/initdata.ts` — `verifyInitData(initData, botToken,
+allowedChatIds, nowMs?): TelegramInitData`. Parses URL-encoded
+      payload, sorts non-hash pairs alphabetically joined with `\n`,
+      derives `secret = HMAC_SHA256("WebAppData", botToken)` then
+      `dataHash = HMAC_SHA256(secret, joined)` and `timingSafeEqual`s
+      against the provided `hash`. Rejects `auth_date` older than 60 s.
+      Rejects when the embedded `chat.id` (or `user.id` when `chat` is
+      absent for DM payloads) is not on `allowedChatIds`. Throws
+      `TelegramError` on every failure.
+- [x] `TelegramInitData` shape + `TelegramInitDataUser` / `…Chat` + new
+      `TelegramErrorCode` entries (`initdata-malformed`,
+      `initdata-tampered`, `initdata-expired`, `initdata-disallowed-chat`)
+      in `electron/telegram/types.ts`.
+- [x] `electron/telegram/initdata.test.ts` — 12 cases: known-good,
+      chat-id wins over user-id, tampered hash, wrong-token hash, expired
+      payload, 60 s boundary acceptance, disallowed chat, missing hash,
+      missing auth_date, missing chat/user, malformed user JSON,
+      uppercase-hex hash (malformed by strict shape check).
+- [x] POST `/api/telegram-auth` route in `electron/remote/server.ts`
+      with a new `telegramAuth: { verify }` opt. Body is the raw
+      `initData` string capped at 4 KB. `verify` returning `true` →
+      `200 { token: <session token> }` (server-static token); throwing →
+      `401 unauthorized`; returning `false` → `404 not found`. Route is
+      public — no bearer required — so the SPA can mint its token before
+      having one.
+- [x] Mobile SPA bootstrap — `src/remote/auth.ts:initAuth` is now
+      async, tries `window.Telegram?.WebApp?.initData` first, falls back
+      to the URL-token path and then localStorage. `App.tsx` awaits the
+      async result.
+- [x] Integration tests in `electron/remote/server.test.ts` — 7 cases:
+      200 with session token; 401 on throw; 404 when `verify` returns
+      false; 404 when hook absent; 413 oversize; bearer-not-required;
+      raw body round-trips to `verify` unchanged.
+
+### Optional cloudflared tunnel
+
+- [x] `electron/telegram/tunnel.ts` — detects `cloudflared` at
+      `config.cloudflaredPath` (or via PATH). Spawns
+      `cloudflared tunnel --url http://localhost:<remotePort>`. Parses
+      stdout AND stderr for `https://<random>.trycloudflare.com`. Exposes
+      `getTunnelStatus(): { active; url; lastError }`. SIGTERM on stop
+      with a 2 s force-kill fallback. URL-timeout fallback kills the
+      child and captures the first stderr line as `lastError`. ENOENT
+      surfaces as a clear "binary not found" message. Idempotent for the
+      same `remotePort`.
+- [x] Wired into the bot lifecycle: `startTelegramBot()` →
+      `reconcileTunnel()`; `stopTelegramBot()` → `stopTunnel()`;
+      `applyConfigUpdate` re-reconciles on toggle/path change.
+      `setRemoteServerPort(port | null)` exported from
+      `electron/telegram/index.ts`; `register.ts` calls it after
+      `StartRemoteServer` / `StopRemoteServer` so the bot can decide
+      whether to spawn cloudflared.
+- [x] `TelegramStatus.tunnelActive` and `tunnelUrl` reflect the live
+      tunnel state via `getTunnelStatus()`; `lastError` falls back to the
+      tunnel's lastError when the bot itself has none.
+- [x] `electron/telegram/tunnel.test.ts` — 9 cases: URL via stdout;
+      user-configured path; URL via stderr; start timeout → lastError;
+      first stderr captured on early exit; ENOENT surface; idempotent
+      re-call for same port; stopTunnel sends SIGTERM and clears state;
+      stopTunnel no-op when nothing is running.
+
+### File / photo uploads
+
+- [x] `electron/telegram/upload.ts` — handles `message:document` and
+      `message:photo`. Rejects >20 MB. Resolves `file_id → file_path` via
+      `ctx.api.getFile` and streams the download into
+      `<os.tmpdir>/parallel-code-telegram-uploads/<short-id>-<sanitized>`.
+      Reply: MD2-escaped inline-code path + `[📋 Paste path into agent]`
+      keyboard.
+- [x] `upload:<token>` callback handler dispatched from `inline.ts`
+      (extended `parseData` action set to include `upload`). The paste
+      handler consumes the token (single-use), resolves the focused
+      agent through `preamble.resolveAgent` (project opt-in enforced),
+      and writes the shell-escaped path via `writeToAgent`.
+- [x] Audit entries: `category: 'upload'` on save (cmd `'save'`),
+      paste (cmd `'paste'`), and reject (cmd `'reject'` for oversized
+      files).
+- [x] `bot.ts` registers both `bot.on('message:document')` and
+      `bot.on('message:photo')` via `registerUploadHandlers`.
+- [x] `electron/telegram/upload.test.ts` — shellEscapePath cases
+      (plain pass-through, spaces wrapped, single-quote escape,
+      metacharacter quoting) plus an empty-store lookup case.
+
+### Voice prompts
+
+- [x] `electron/telegram/voice.ts` — 8-step pipeline (chat-allowed,
+      runtime check, target resolve, download, transcribe, inject, echo,
+      cleanup). `whisper-cpp` runtime: spawn the configured binary with
+      `-f <file> -otxt -of <output>`, 60 s timeout, kill + cleanup on
+      timeout, read `<output>.txt`. `openai` runtime: POST to
+      `/v1/audio/transcriptions` with `model: 'whisper-1'`, multipart
+      body (Node built-in `FormData` + `Blob`), Bearer header from
+      `store.readOpenAiKey()`. Temp files cleaned in all paths.
+- [x] Target resolution order: reply-chain (via
+      `notifier.replyMap.lookup`) → focused agent (via
+      `getFocusedAgent()`) → error reply with the exact spec text. The
+      resolved agent passes through `preamble.resolveAgent` so the
+      project opt-in gate fires before any download.
+- [x] On success: `writeToAgent(agentId, transcript + '\n')` and a
+      `🎙 → <transcript>` echo reply (redacted + MD2-escaped). The
+      echo's message_id is registered with `notifier.replyMap` so
+      reply-chain replies route back. Audit `category: 'voice'`.
+- [x] `bot.ts` registers `bot.on('message:voice')` via
+      `registerVoiceHandlers`. `runtime === 'none'` short-circuits with
+      the verbatim "Voice input is disabled. Enable it in Settings."
+      reply and never downloads.
+
+### Settings UI extensions
+
+- [x] `TelegramSettings.tsx` — added Mini App public URL field with
+      Save button, cloudflared auto-tunnel toggle (visible only when
+      `probeCloudflared` succeeds; shows the version when known),
+      cloudflared path override (with re-probe on save), and the voice
+      subsection (runtime radio picker, whisper.cpp binary path picker
+      shown only for `whisper-cpp`, OpenAI key password input shown only
+      for `openai`). OpenAI key flows through `SetTelegramConfig` and is
+      dropped from local state after save.
+- [x] `IPC.ProbeCloudflared` channel added to `channels.ts` and
+      `preload.cjs` `ALLOWED_CHANNELS`; handler in `register.ts` calls
+      `probeTelegramTunnel()`. Settings probes once per dialog open and
+      caches the result.
+
+### Documentation + validation
+
+- [x] `README.md` — added "Remote control via Telegram" section
+      covering BotFather setup, `/start` allowed-chat handshake,
+      command surface, Mini App + cloudflared auto-tunnel, voice
+      prompts (whisper.cpp + OpenAI runtimes), file uploads, and the
+      privacy/redaction/audit caveats from the proposal.
+- [x] `openspec validate --all --strict` — green via
+      `npx --yes @fission-ai/openspec validate --all --strict`. All
+      10 items pass strict validation including
+      `change/add-telegram-control`.
+- [ ] `electron/ipc/pty.test.ts` integration case for
+      `subscribeToAgentExit` against a real spawned PTY — DEFERRED to a
+      follow-up. The exit subscriber surface has inline coverage via
+      `livetail.test.ts` (with an injected subscribe stub) from slice 2;
+      a real-PTY integration test is best handled in a dedicated CI job
+      so the unit-test suite stays fast and flake-free.
+- [x] `npm run typecheck` and `npm run lint` are both green.
+      `vitest run electron/telegram/ electron/remote/server.test.ts`
+      reports 96 / 96 passing (63 from slices 1–2 plus 33 new from
+      slice 3). The full `vitest run` shows 17 failures in
+      `coverage.test.ts`, `atomic.test.ts`, and `pty.test.ts` — every
+      one is a pre-existing Windows-only POSIX issue
+      (`mode 0o666 vs 0o600` on NTFS, `/bin/sh not found`, POSIX
+      docker bind-mount paths). Confirmed unrelated to slice 3 by
+      re-running with this slice's working-copy edits stashed; the
+      failures persist. `prettier --check` is clean on every file
+      this slice touched; the repo-wide format drift is CRLF line
+      endings from Windows `core.autocrlf=true` and exists on
+      pre-slice-1 commits.

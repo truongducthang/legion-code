@@ -15,17 +15,20 @@ import { chatAllowed, resolveAgent, auditAndReturn } from './preamble.js';
 import { getConfig } from './config.js';
 import { escapeMd2 } from './formatter.js';
 import { warn as logWarn } from '../log.js';
+import { handleUploadPaste } from './upload.js';
 
-type Action = 'approve' | 'deny' | 'open';
+type Action = 'approve' | 'deny' | 'open' | 'upload';
 
-function parseData(data: string): { action: Action; agentId: string } | null {
+function parseData(data: string): { action: Action; payload: string } | null {
   const i = data.indexOf(':');
   if (i < 0) return null;
   const action = data.slice(0, i);
-  const agentId = data.slice(i + 1);
-  if (action !== 'approve' && action !== 'deny' && action !== 'open') return null;
-  if (!agentId) return null;
-  return { action, agentId };
+  const payload = data.slice(i + 1);
+  if (action !== 'approve' && action !== 'deny' && action !== 'open' && action !== 'upload') {
+    return null;
+  }
+  if (!payload) return null;
+  return { action, payload };
 }
 
 async function answerToast(ctx: Context, text: string): Promise<void> {
@@ -124,10 +127,17 @@ export function registerInlineCallbacks(bot: Bot): void {
       await answerToast(ctx, 'Unknown action.');
       return;
     }
-    if (parsed.action === 'open') {
-      await handleOpen(ctx, parsed.agentId);
-    } else {
-      await handleApproveDeny(ctx, parsed.action, parsed.agentId);
+    switch (parsed.action) {
+      case 'open':
+        await handleOpen(ctx, parsed.payload);
+        break;
+      case 'upload':
+        await handleUploadPaste(ctx, parsed.payload);
+        break;
+      case 'approve':
+      case 'deny':
+        await handleApproveDeny(ctx, parsed.action, parsed.payload);
+        break;
     }
   });
 }

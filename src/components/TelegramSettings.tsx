@@ -8,14 +8,22 @@ import {
   setTelegramToken,
   setTelegramRedactPatterns,
   setTelegramExtraQuestionPatterns,
+  setTelegramAutoTunnel,
+  setTelegramPublicBaseUrl,
+  setTelegramCloudflaredPath,
+  setTelegramVoiceRuntime,
+  setTelegramWhisperCppPath,
+  setTelegramOpenAiKey,
+  probeCloudflared,
   addAllowedChat,
   removeAllowedChat,
   startTelegramBot,
   stopTelegramBot,
   type TelegramStatusResponse,
+  type CloudflaredProbeResult,
 } from '../store/telegram';
 import { theme, sectionLabelStyle } from '../lib/theme';
-import type { TelegramPushPolicy } from '../store/types';
+import type { TelegramPushPolicy, PersistedTelegramConfig } from '../store/types';
 
 const POLL_INTERVAL_MS = 3_000;
 
@@ -47,11 +55,26 @@ export function TelegramSettings(props: TelegramSettingsProps) {
   const [extraQErr, setExtraQErr] = createSignal<string | null>(null);
   const [extraQDirty, setExtraQDirty] = createSignal(false);
 
+  // Tunnel section
+  const [publicUrlInput, setPublicUrlInput] = createSignal('');
+  const [cloudflaredPathInput, setCloudflaredPathInput] = createSignal('');
+  const [cloudflaredProbe, setCloudflaredProbe] = createSignal<CloudflaredProbeResult | null>(null);
+
+  // Voice section
+  const [whisperPathInput, setWhisperPathInput] = createSignal('');
+  const [openaiKeyInput, setOpenaiKeyInput] = createSignal('');
+  const [showOpenaiKey, setShowOpenaiKey] = createSignal(false);
+
   const tokenInputId = createUniqueId();
   const chatInputId = createUniqueId();
   const enabledId = createUniqueId();
   const redactId = createUniqueId();
   const extraQId = createUniqueId();
+  const autoTunnelId = createUniqueId();
+  const publicUrlId = createUniqueId();
+  const cloudflaredPathId = createUniqueId();
+  const whisperPathId = createUniqueId();
+  const openaiKeyId = createUniqueId();
 
   createEffect(() => {
     if (!props.active) return;
@@ -77,6 +100,17 @@ export function TelegramSettings(props: TelegramSettingsProps) {
     if (!props.active) return;
     if (!redactDirty()) setRedactText(store.telegram.redactPatterns.join('\n'));
     if (!extraQDirty()) setExtraQText(store.telegram.extraQuestionPatterns.join('\n'));
+    // Hydrate the tunnel/voice inputs from the persisted config on open.
+    setPublicUrlInput(store.telegram.publicBaseUrl ?? '');
+    setCloudflaredPathInput(store.telegram.cloudflaredPath ?? '');
+    setWhisperPathInput(store.telegram.voice.whisperCppPath ?? '');
+  });
+
+  // Probe cloudflared once per dialog open so the auto-tunnel toggle's
+  // visibility reflects current PATH state without a continuous poll.
+  createEffect(() => {
+    if (!props.active) return;
+    void probeCloudflared().then((r) => setCloudflaredProbe(r));
   });
 
   function compilePatterns(
@@ -214,6 +248,102 @@ export function TelegramSettings(props: TelegramSettingsProps) {
     setActionError(null);
     try {
       await removeAllowedChat(chatId);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleToggleAutoTunnel(checked: boolean): Promise<void> {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setTelegramAutoTunnel(checked);
+      const s = await refreshTelegramStatus();
+      setStatus(s);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSavePublicUrl(): Promise<void> {
+    const trimmed = publicUrlInput().trim();
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setTelegramPublicBaseUrl(trimmed || null);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveCloudflaredPath(): Promise<void> {
+    const trimmed = cloudflaredPathInput().trim();
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setTelegramCloudflaredPath(trimmed || null);
+      // Re-probe with the new path.
+      setCloudflaredProbe(await probeCloudflared());
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleVoiceRuntimeChange(
+    runtime: PersistedTelegramConfig['voice']['runtime'],
+  ): Promise<void> {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setTelegramVoiceRuntime(runtime);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveWhisperPath(): Promise<void> {
+    const trimmed = whisperPathInput().trim();
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setTelegramWhisperCppPath(trimmed || null);
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveOpenAiKey(): Promise<void> {
+    const trimmed = openaiKeyInput().trim();
+    if (!trimmed) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setTelegramOpenAiKey(trimmed);
+      setOpenaiKeyInput('');
+    } catch (err) {
+      setActionError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleClearOpenAiKey(): Promise<void> {
+    setBusy(true);
+    setActionError(null);
+    try {
+      await setTelegramOpenAiKey('');
     } catch (err) {
       setActionError((err as Error).message);
     } finally {
@@ -564,6 +694,282 @@ export function TelegramSettings(props: TelegramSettingsProps) {
           wake you up — keep matches narrow.
         </span>
       </div>
+
+      {/* Public URL + cloudflared auto-tunnel */}
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+        <span style={{ 'font-size': '13px', color: theme.fg, 'font-weight': '500' }}>
+          Mini App public URL
+        </span>
+        <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+          Required for the “Open” button in Telegram notifications to launch the SPA inside
+          Telegram. Provide one via Tailscale Funnel, ngrok, or your own reverse proxy — or enable
+          the cloudflared auto-tunnel below.
+        </span>
+        <label for={publicUrlId} style={{ 'font-size': '13px', color: theme.fg }}>
+          Public base URL
+        </label>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <input
+            id={publicUrlId}
+            type="url"
+            value={publicUrlInput()}
+            placeholder="https://abc.example.com"
+            disabled={busy()}
+            onInput={(e) => setPublicUrlInput(e.currentTarget.value)}
+            style={{
+              flex: '1',
+              padding: '6px 8px',
+              'border-radius': '6px',
+              border: `1px solid ${theme.border}`,
+              background: theme.bgInput,
+              color: theme.fg,
+              'font-family': 'monospace',
+              'font-size': '13px',
+            }}
+          />
+          <button
+            type="button"
+            disabled={busy()}
+            onClick={() => void handleSavePublicUrl()}
+            style={settingsButtonStyle(true)}
+          >
+            Save
+          </button>
+        </div>
+
+        <Show
+          when={cloudflaredProbe()?.available === true}
+          fallback={
+            <Show when={cloudflaredProbe() !== null}>
+              <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+                cloudflared not detected on PATH. Install it
+                (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+                or point to a binary below to enable the auto-tunnel.
+              </span>
+            </Show>
+          }
+        >
+          <label
+            for={autoTunnelId}
+            style={{
+              display: 'flex',
+              'align-items': 'center',
+              gap: '10px',
+              cursor: 'pointer',
+              padding: '8px 12px',
+              'border-radius': '8px',
+              background: theme.bgInput,
+              border: `1px solid ${theme.border}`,
+              'margin-top': '6px',
+            }}
+          >
+            <input
+              id={autoTunnelId}
+              type="checkbox"
+              checked={store.telegram.autoTunnel}
+              disabled={busy()}
+              onChange={(e) => void handleToggleAutoTunnel(e.currentTarget.checked)}
+              style={{ 'accent-color': theme.accent, cursor: 'pointer' }}
+            />
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+              <span style={{ 'font-size': '14px', color: theme.fg }}>cloudflared auto-tunnel</span>
+              <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+                Spawn cloudflared and publish the remote server over a free trycloudflare.com URL
+                whenever the bot starts.
+                <Show when={cloudflaredProbe()?.version}>
+                  {' '}
+                  <span style={{ 'font-family': 'monospace' }}>
+                    ({cloudflaredProbe()?.version})
+                  </span>
+                </Show>
+              </span>
+            </div>
+          </label>
+          <Show when={status()?.tunnelUrl}>
+            <span
+              style={{
+                'font-size': '12px',
+                color: theme.accent,
+                'font-family': 'monospace',
+                'word-break': 'break-all',
+              }}
+            >
+              Tunnel: {status()?.tunnelUrl}
+            </span>
+          </Show>
+        </Show>
+
+        <label for={cloudflaredPathId} style={{ 'font-size': '13px', color: theme.fg }}>
+          cloudflared path (optional)
+        </label>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <input
+            id={cloudflaredPathId}
+            type="text"
+            value={cloudflaredPathInput()}
+            placeholder="auto-detect from PATH"
+            disabled={busy()}
+            onInput={(e) => setCloudflaredPathInput(e.currentTarget.value)}
+            style={{
+              flex: '1',
+              padding: '6px 8px',
+              'border-radius': '6px',
+              border: `1px solid ${theme.border}`,
+              background: theme.bgInput,
+              color: theme.fg,
+              'font-family': 'monospace',
+              'font-size': '13px',
+            }}
+          />
+          <button
+            type="button"
+            disabled={busy()}
+            onClick={() => void handleSaveCloudflaredPath()}
+            style={settingsButtonStyle()}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+
+      {/* Voice prompts */}
+      <Show when={store.telegram.enabled && store.telegram.allowedChatIds.length > 0}>
+        <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+          <span style={{ 'font-size': '13px', color: theme.fg, 'font-weight': '500' }}>
+            Voice prompts
+          </span>
+          <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+            Transcribe Telegram voice messages and inject the text into the focused agent.
+            Reply-chain replies override focus.
+          </span>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <For
+              each={[
+                { value: 'none' as const, label: 'Off' },
+                { value: 'whisper-cpp' as const, label: 'whisper.cpp (local)' },
+                { value: 'openai' as const, label: 'OpenAI Whisper API' },
+              ]}
+            >
+              {(opt) => (
+                <label
+                  style={{
+                    display: 'flex',
+                    'align-items': 'center',
+                    gap: '6px',
+                    padding: '6px 10px',
+                    'border-radius': '6px',
+                    border: `1px solid ${theme.border}`,
+                    background:
+                      store.telegram.voice.runtime === opt.value ? theme.bgElevated : theme.bgInput,
+                    cursor: 'pointer',
+                    'font-size': '12px',
+                    color: theme.fg,
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="telegram-voice-runtime"
+                    value={opt.value}
+                    checked={store.telegram.voice.runtime === opt.value}
+                    disabled={busy()}
+                    onChange={() => void handleVoiceRuntimeChange(opt.value)}
+                    style={{ 'accent-color': theme.accent, cursor: 'pointer' }}
+                  />
+                  {opt.label}
+                </label>
+              )}
+            </For>
+          </div>
+
+          <Show when={store.telegram.voice.runtime === 'whisper-cpp'}>
+            <label for={whisperPathId} style={{ 'font-size': '13px', color: theme.fg }}>
+              whisper.cpp binary path
+            </label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <input
+                id={whisperPathId}
+                type="text"
+                value={whisperPathInput()}
+                placeholder="/usr/local/bin/whisper"
+                disabled={busy()}
+                onInput={(e) => setWhisperPathInput(e.currentTarget.value)}
+                style={{
+                  flex: '1',
+                  padding: '6px 8px',
+                  'border-radius': '6px',
+                  border: `1px solid ${theme.border}`,
+                  background: theme.bgInput,
+                  color: theme.fg,
+                  'font-family': 'monospace',
+                  'font-size': '13px',
+                }}
+              />
+              <button
+                type="button"
+                disabled={busy()}
+                onClick={() => void handleSaveWhisperPath()}
+                style={settingsButtonStyle(true)}
+              >
+                Save
+              </button>
+            </div>
+          </Show>
+
+          <Show when={store.telegram.voice.runtime === 'openai'}>
+            <label for={openaiKeyId} style={{ 'font-size': '13px', color: theme.fg }}>
+              OpenAI API key
+            </label>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              <input
+                id={openaiKeyId}
+                type={showOpenaiKey() ? 'text' : 'password'}
+                value={openaiKeyInput()}
+                placeholder="sk-..."
+                disabled={busy()}
+                onInput={(e) => setOpenaiKeyInput(e.currentTarget.value)}
+                style={{
+                  flex: '1',
+                  padding: '6px 8px',
+                  'border-radius': '6px',
+                  border: `1px solid ${theme.border}`,
+                  background: theme.bgInput,
+                  color: theme.fg,
+                  'font-family': 'monospace',
+                  'font-size': '13px',
+                }}
+              />
+              <button
+                type="button"
+                disabled={busy()}
+                onClick={() => setShowOpenaiKey(!showOpenaiKey())}
+                style={settingsButtonStyle()}
+              >
+                {showOpenaiKey() ? 'Hide' : 'Show'}
+              </button>
+              <button
+                type="button"
+                disabled={busy() || !openaiKeyInput().trim()}
+                onClick={() => void handleSaveOpenAiKey()}
+                style={settingsButtonStyle(true)}
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                disabled={busy()}
+                onClick={() => void handleClearOpenAiKey()}
+                style={settingsButtonStyle()}
+              >
+                Clear
+              </button>
+            </div>
+            <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+              Stored encrypted via the system keychain. Never round-trips through the renderer's
+              state.json. The field clears on save, so re-entering replaces the stored key.
+            </span>
+          </Show>
+        </div>
+      </Show>
 
       {/* Status + manual start/stop */}
       <div

@@ -9,6 +9,8 @@ import { Bot, GrammyError } from 'grammy';
 import { info as logInfo, warn as logWarn, error as logError } from '../log.js';
 import { registerCommands, handlePromptForReplyChain } from './commands.js';
 import { registerInlineCallbacks } from './inline.js';
+import { registerUploadHandlers } from './upload.js';
+import { registerVoiceHandlers } from './voice.js';
 import { Notifier, setNotifier, getNotifier } from './notifier.js';
 import { chatAllowed } from './preamble.js';
 import { getConfig, setConfig } from './config.js';
@@ -113,6 +115,8 @@ export async function startBot(token: string): Promise<{ botUsername: string }> 
 
   registerCommands(bot);
   registerInlineCallbacks(bot);
+  registerUploadHandlers(bot);
+  registerVoiceHandlers(bot);
 
   // Reply-chain: a Telegram "reply to" a tagged bot message routes back as a
   // /prompt for the source agent without requiring an explicit `<id>`.

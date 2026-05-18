@@ -16,6 +16,10 @@ export type TelegramErrorCode =
   | 'agent-not-found'
   | 'agent-not-opted-in'
   | 'agent-project-missing'
+  | 'initdata-malformed'
+  | 'initdata-tampered'
+  | 'initdata-expired'
+  | 'initdata-disallowed-chat'
   | 'unknown';
 
 export class TelegramError extends Error {
@@ -101,6 +105,40 @@ export interface LiveTailHandle {
   chatId: number;
   agentId: string;
   close(reason: string): Promise<void>;
+}
+
+/** Decoded Telegram WebApp `initData` payload after signature verification. */
+export interface TelegramInitData {
+  /** Unix seconds; verified to be within the freshness window. */
+  authDate: number;
+  /** chat.id when present, else user.id (DM payloads omit `chat`). */
+  chatId: number;
+  /** Decoded `user` JSON object, if `initData` carried one. */
+  user: TelegramInitDataUser | null;
+  /** Decoded `chat` JSON object, if `initData` carried one. */
+  chat: TelegramInitDataChat | null;
+  /** Raw key→value pairs (URL-decoded), minus the `hash` field. */
+  raw: Record<string, string>;
+  /** The verified `hash` field, lowercase hex. */
+  hash: string;
+}
+
+export interface TelegramInitDataUser {
+  id: number;
+  first_name?: string;
+  last_name?: string;
+  username?: string;
+  language_code?: string;
+  is_premium?: boolean;
+  [key: string]: unknown;
+}
+
+export interface TelegramInitDataChat {
+  id: number;
+  type?: string;
+  title?: string;
+  username?: string;
+  [key: string]: unknown;
 }
 
 export const DEFAULT_TELEGRAM_CONFIG: TelegramConfig = {

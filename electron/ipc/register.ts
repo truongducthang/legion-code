@@ -37,6 +37,9 @@ import {
   applyConfigUpdate as applyTelegramConfigUpdate,
   setFocusedAgentId,
   onRendererStateSaved,
+  verifyTelegramInitData,
+  setRemoteServerPort as setTelegramRemoteServerPort,
+  probeTelegramTunnel,
   type TelegramConfig,
 } from '../telegram/index.js';
 import {
@@ -951,7 +954,11 @@ export function registerAllHandlers(win: BrowserWindow): void {
           lastLine: '',
         };
       },
+      telegramAuth: { verify: verifyTelegramInitData },
     });
+    // Inform the telegram module so it can decide whether to spawn the
+    // cloudflared auto-tunnel for the Mini App.
+    void setTelegramRemoteServerPort(remoteServer.port);
     return {
       url: remoteServer.url,
       wifiUrl: remoteServer.wifiUrl,
@@ -965,6 +972,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     if (remoteServer) {
       await remoteServer.stop();
       remoteServer = null;
+      await setTelegramRemoteServerPort(null);
     }
   });
 
@@ -1015,6 +1023,10 @@ export function registerAllHandlers(win: BrowserWindow): void {
       throw new Error('agentId must be a string or null');
     }
     setFocusedAgentId(args.agentId);
+  });
+
+  ipcMain.handle(IPC.ProbeCloudflared, async () => {
+    return await probeTelegramTunnel();
   });
 
   // --- Forward window events to renderer ---

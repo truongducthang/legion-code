@@ -100,6 +100,7 @@ export enum IPC {
   GetTelegramStatus = 'get_telegram_status',
   SetTelegramConfig = 'set_telegram_config',
   SetFocusedAgent = 'set_focused_agent',
+  ProbeCloudflared = 'probe_cloudflared',
 
   // Plan
   PlanContent = 'plan_content',

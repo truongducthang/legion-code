@@ -95,6 +95,7 @@ const ALLOWED_CHANNELS = new Set([
   'get_telegram_status',
   'set_telegram_config',
   'set_focused_agent',
+  'probe_cloudflared',
   // Plan
   'plan_content',
   'read_plan_content',
