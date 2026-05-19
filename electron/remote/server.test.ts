@@ -156,6 +156,109 @@ afterEach(async () => {
   rmSync(staticDir, { recursive: true, force: true });
 });
 
+describe('remote server spec scenarios', () => {
+  it('closes unauthenticated client with 4001 on list_projects (spec)', async () => {
+    server = startRemoteServer({
+      port,
+      staticDir,
+      getTaskName: () => '',
+      getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
+      listProjects: async () => [{ root: '/p', name: 'p', defaultBaseBranch: null }],
+    });
+    const conn = await openConn(false);
+    send(conn.ws, { type: 'list_projects' });
+    const closed = await nextClose(conn.ws);
+    expect(closed.code).toBe(4001);
+    // Server must NOT emit the projects payload to an unauth client.
+    expect(conn.inbox.some((m) => m.type === 'projects')).toBe(false);
+  });
+
+  it('replies with empty projects list when desktop has no open projects (spec)', async () => {
+    server = startRemoteServer({
+      port,
+      staticDir,
+      getTaskName: () => '',
+      getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
+      listProjects: async () => [],
+    });
+    const conn = await openConn(true);
+    send(conn.ws, { type: 'list_projects' });
+    const reply = await waitForMessage(
+      conn,
+      (m): m is Extract<ServerMessage, { type: 'projects' }> => m.type === 'projects',
+    );
+    expect(reply.list).toEqual([]);
+    conn.ws.close();
+  });
+
+  it('replies with empty branches list when the callback rejects (spec: git failure)', async () => {
+    server = startRemoteServer({
+      port,
+      staticDir,
+      getTaskName: () => '',
+      getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
+      listProjects: async () => [{ root: '/p', name: 'p', defaultBaseBranch: null }],
+      listBranches: async () => {
+        throw new Error('git boom');
+      },
+    });
+    const conn = await openConn(true);
+    send(conn.ws, { type: 'list_branches', projectRoot: '/p' });
+    const reply = await waitForMessage(
+      conn,
+      (m): m is Extract<ServerMessage, { type: 'branches' }> => m.type === 'branches',
+    );
+    expect(reply.projectRoot).toBe('/p');
+    expect(reply.list).toEqual([]);
+    conn.ws.close();
+  });
+
+  it('parser drops oversized prompt and the server emits no spawn_result (spec)', async () => {
+    server = startRemoteServer({
+      port,
+      staticDir,
+      getTaskName: () => '',
+      getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
+      listProjects: async () => [{ root: '/p', name: 'p', defaultBaseBranch: null }],
+      spawnTask: vi.fn(async (req: SpawnTaskRequest) => ({
+        type: 'spawn_result' as const,
+        requestId: req.requestId,
+        ok: true as const,
+        taskId: 't',
+        agentId: 'a',
+      })),
+    });
+    const conn = await openConn(true);
+    // Send an oversized prompt directly via the raw socket — parseClientMessage
+    // must drop it before the handler runs.
+    send(conn.ws, {
+      type: 'spawn_task',
+      requestId: 'rOver',
+      projectRoot: '/p',
+      baseBranch: null,
+      agentId: 'claude-code',
+      taskName: 'x',
+      prompt: 'x'.repeat(16385),
+    });
+    // Follow it with a known-valid request so we have something to wait on
+    // that proves the socket stayed open.
+    send(conn.ws, {
+      type: 'spawn_task',
+      requestId: 'rOK',
+      projectRoot: '/p',
+      baseBranch: null,
+      agentId: 'claude-code',
+      taskName: 'x',
+      prompt: 'short prompt',
+    });
+    const reply = await waitForMessage(conn, spawnResultWith('rOK'));
+    expect(reply.ok).toBe(true);
+    // The oversized request must not have produced a spawn_result.
+    expect(conn.inbox.some((m) => m.type === 'spawn_result')).toBe(false);
+    conn.ws.close();
+  });
+});
+
 describe('remote server spawn_task', () => {
   it('closes unauthenticated clients with 4001 on spawn_task', async () => {
     server = startRemoteServer({

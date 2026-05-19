@@ -288,6 +288,72 @@ describe('runMobileSpawn happy path + failure modes', () => {
     expect(createTaskMock).toHaveBeenCalledWith('Fix bug', '/Users/me/repo', [], 'task', undefined);
   });
 
+  it('retries writeToAgent on "Agent not found" until the PTY comes up', async () => {
+    vi.useFakeTimers();
+    createTaskMock.mockResolvedValueOnce({
+      id: 'task-4',
+      branch_name: 'task/r',
+      worktree_path: '/wt',
+    });
+    spawnAgentMock.mockImplementationOnce(() => undefined);
+    // Fail the first three write attempts with the "not found" message
+    // writeToAgentWhenReady is looking for; succeed after that.
+    let attempts = 0;
+    writeToAgentMock.mockImplementation(() => {
+      attempts++;
+      if (attempts <= 3) {
+        throw new Error('Agent not found: x');
+      }
+    });
+    const maps = makeMaps({
+      projects: [{ root: '/Users/me/repo', name: 'r', defaultBaseBranch: null }],
+    });
+    const result = await runMobileSpawn(
+      fakeWin,
+      baseReq,
+      maps.projectsByRoot,
+      maps.lastBranchesByRoot,
+      maps.taskNames,
+    );
+    expect(result.ok).toBe(true);
+    // Let the fire-and-forget retry loop chew through its sleeps.
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+    expect(attempts).toBeGreaterThanOrEqual(4);
+  });
+
+  it('does not retry writeToAgent for non-"not found" errors', async () => {
+    vi.useFakeTimers();
+    createTaskMock.mockResolvedValueOnce({
+      id: 'task-5',
+      branch_name: 'task/s',
+      worktree_path: '/wt',
+    });
+    spawnAgentMock.mockImplementationOnce(() => undefined);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let calls = 0;
+    writeToAgentMock.mockImplementation(() => {
+      calls++;
+      throw new Error('PTY died unexpectedly');
+    });
+    const maps = makeMaps({
+      projects: [{ root: '/Users/me/repo', name: 'r', defaultBaseBranch: null }],
+    });
+    await runMobileSpawn(
+      fakeWin,
+      baseReq,
+      maps.projectsByRoot,
+      maps.lastBranchesByRoot,
+      maps.taskNames,
+    );
+    await vi.runAllTimersAsync();
+    warnSpy.mockRestore();
+    vi.useRealTimers();
+    // First call throws a non-retryable error → propagates → caught by
+    // sendInitialPrompt's outer .catch → no further attempts.
+    expect(calls).toBe(1);
+  });
+
   it('writes prompt after spawn via writeToAgent (bracketed paste + enter)', async () => {
     vi.useFakeTimers();
     createTaskMock.mockResolvedValueOnce({
