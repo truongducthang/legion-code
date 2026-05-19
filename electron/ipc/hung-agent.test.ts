@@ -49,6 +49,8 @@ import {
   classify,
   validateSettings,
   nudgeAgent,
+  setHungAgentSettings,
+  getHungAgentSettings,
   __resetForTests,
   __initForTests,
   __runTickForTests,
@@ -422,5 +424,73 @@ describe('nudgeAgent', () => {
       throw new Error('Agent not found: a1');
     });
     expect(() => nudgeAgent('a1')).not.toThrow();
+  });
+});
+
+describe('settings round-trip', () => {
+  it('the next tick after a setHungAgentSettings sees the new thresholds', () => {
+    let now = 1_000_000;
+    const { win, sent } = makeWin();
+    __initForTests({
+      win,
+      settings: { idleThresholdMs: 5 * 60_000, hungThresholdMs: 15 * 60_000 },
+      now: () => now,
+    });
+
+    // Tick 1: record active silently
+    mockState.snapshot = [{ agentId: 'a1', taskId: 't1', lastDataAt: now }];
+    __runTickForTests();
+    expect(sent).toEqual([]);
+
+    // Shrink hung threshold so the same elapsed silence trips hung now.
+    setHungAgentSettings({ idleThresholdMs: 0, hungThresholdMs: 60_000 });
+    expect(getHungAgentSettings()).toEqual({
+      idleThresholdMs: 0,
+      hungThresholdMs: 60_000,
+    });
+
+    now += 2 * 60_000; // 2 min — under old idle (5) but past new hung (1)
+    __runTickForTests();
+
+    expect(sent.length).toBe(1);
+    expect(sent[0].payload.status).toBe('hung');
+  });
+
+  it('setHungAgentSettings rejects invalid input without mutating current settings', () => {
+    const { win } = makeWin();
+    __initForTests({
+      win,
+      settings: { idleThresholdMs: 5 * 60_000, hungThresholdMs: 15 * 60_000 },
+    });
+
+    expect(() => setHungAgentSettings({ idleThresholdMs: 5, hungThresholdMs: 1 })).toThrow();
+    expect(getHungAgentSettings()).toEqual({
+      idleThresholdMs: 5 * 60_000,
+      hungThresholdMs: 15 * 60_000,
+    });
+  });
+});
+
+describe('renderer store sweep proxy — runTick removes departed agents', () => {
+  it('a once-known agent disappears from prevStatus when the snapshot drops it, even if the exit listener never fires', () => {
+    let now = 1_000_000;
+    const { win } = makeWin();
+    __initForTests({ win, settings: defaults(), now: () => now });
+
+    mockState.snapshot = [
+      { agentId: 'a1', taskId: 't1', lastDataAt: now },
+      { agentId: 'a2', taskId: 't2', lastDataAt: now },
+    ];
+    __runTickForTests();
+    expect(__getStateForTests().prevStatus.size).toBe(2);
+
+    // a2 vanishes from snapshot without an exit event (e.g. main race).
+    mockState.snapshot = [{ agentId: 'a1', taskId: 't1', lastDataAt: now }];
+    now += 30_000;
+    __runTickForTests();
+
+    const state = __getStateForTests();
+    expect(state.prevStatus.has('a1')).toBe(true);
+    expect(state.prevStatus.has('a2')).toBe(false);
   });
 });

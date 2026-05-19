@@ -41,11 +41,14 @@ let unsubscribeExit: (() => void) | null = null;
 let nowFn: () => number = () => Date.now();
 
 /** Wire window-lifecycle listeners, load persisted settings, register the
- *  PTY exit cleanup hook. Call once from registerAllHandlers. */
+ *  PTY exit cleanup hook. Call once from registerAllHandlers — a defensive
+ *  teardown runs first so a double-init in tests or hot-reload doesn't
+ *  leak listeners. */
 export function initHungAgent(
   mainWindow: BrowserWindow,
   opts: { getTaskName: (taskId: string) => string; settingsDir: string },
 ): void {
+  if (unsubscribeExit) teardown();
   win = mainWindow;
   getTaskName = opts.getTaskName;
   settingsDir = opts.settingsDir;
