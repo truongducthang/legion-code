@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import fs from 'fs';
 import { promisify } from 'util';
 import type { BrowserWindow } from 'electron';
 import { IPC } from './channels.js';
@@ -231,6 +232,16 @@ function withRepoLock<T>(projectRoot: string, fn: () => Promise<T>): Promise<T> 
 async function doRefresh(taskId: string): Promise<void> {
   const entry = tasks.get(taskId);
   if (!entry) return;
+
+  // `checkMergeStatus` swallows its own `exec` errors and falls back to
+  // `clean` when the worktree is gone (the underlying `git rev-list`
+  // throws and is caught). We must not surface that as a misleading
+  // green badge, so probe for the directory first and classify as
+  // `unknown` if it disappeared.
+  if (!fs.existsSync(entry.worktreePath)) {
+    handleUnknown(entry);
+    return;
+  }
 
   let result: Awaited<ReturnType<typeof checkMergeStatus>>;
   try {

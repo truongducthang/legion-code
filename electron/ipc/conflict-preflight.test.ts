@@ -79,6 +79,20 @@ function makeWin(): WinHandle {
 
 vi.mock('electron', () => ({}));
 
+// The module calls `fs.existsSync(worktreePath)` before refreshing so a
+// deleted worktree doesn't slip through as `clean`. In unit tests the
+// paths are fake (`/r/wt`), so the real existsSync would always return
+// false and the watcher would short-circuit to `unknown`. Stub it to
+// "exists" so the rest of the scheduler logic is exercised.
+vi.mock('fs', async () => {
+  const real = await vi.importActual<typeof import('fs')>('fs');
+  return {
+    ...real,
+    default: { ...real, existsSync: () => true },
+    existsSync: () => true,
+  };
+});
+
 import { execFile } from 'child_process';
 import { IPC } from './channels.js';
 import {
