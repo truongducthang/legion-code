@@ -89,6 +89,7 @@ const ALLOWED_CHANNELS = new Set([
   'start_remote_server',
   'stop_remote_server',
   'get_remote_status',
+  'mobile_task_spawned',
   // Plan
   'plan_content',
   'read_plan_content',

@@ -29,7 +29,7 @@ import { parseGitHubUrl, taskNameFromGitHubUrl } from '../lib/github-url';
 import type { Agent, Task, GitIsolationMode } from './types';
 import type { DockerSource } from '../lib/docker';
 
-function initTaskInStore(
+export function initTaskInStore(
   taskId: string,
   task: Task,
   agent: Agent,
