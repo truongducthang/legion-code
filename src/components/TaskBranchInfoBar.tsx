@@ -1,5 +1,11 @@
 import { Show, type JSX } from 'solid-js';
-import { store, getProject, showNotification, getPrChecks } from '../store/store';
+import {
+  store,
+  getProject,
+  showNotification,
+  getPrChecks,
+  getConflictPreflight,
+} from '../store/store';
 import { revealItemInDir, openInEditor } from '../lib/shell';
 import { InfoBar } from './InfoBar';
 import { theme } from '../lib/theme';
@@ -23,6 +29,7 @@ const infoBarBtnStyle: JSX.CSSProperties = {
 interface TaskBranchInfoBarProps {
   task: Task;
   onEditProject: (projectId: string) => void;
+  onOpenMerge?: () => void;
 }
 
 export function TaskBranchInfoBar(props: TaskBranchInfoBarProps) {
@@ -174,6 +181,65 @@ export function TaskBranchInfoBar(props: TaskBranchInfoBarProps) {
             </span>
           </Show>
         </button>
+        {(() => {
+          const cp = () => getConflictPreflight(props.task.id);
+          const visible = () => {
+            const c = cp();
+            return c !== undefined && c.status !== 'unknown';
+          };
+          const badgeColor = (): string => {
+            const c = cp();
+            if (!c) return 'transparent';
+            if (c.status === 'clean') return theme.success;
+            if (c.status === 'stale') return theme.warning;
+            if (c.status === 'conflict') return theme.error;
+            return 'transparent';
+          };
+          // One-line accessible label: status · base · N ahead · K conflicting.
+          const badgeTitle = (): string => {
+            const c = cp();
+            if (!c) return '';
+            const conflicts = c.conflictingFiles.length;
+            return `${c.status} · ${c.baseBranch} · ${c.mainAheadCount} ahead · ${conflicts} conflicting`;
+          };
+          return (
+            <Show when={visible()}>
+              <button
+                type="button"
+                title={badgeTitle()}
+                aria-label={badgeTitle()}
+                onClick={() => props.onOpenMerge?.()}
+                disabled={!props.onOpenMerge}
+                style={{
+                  ...infoBarBtnStyle,
+                  'margin-right': '12px',
+                  cursor: props.onOpenMerge ? 'pointer' : 'default',
+                }}
+              >
+                <div
+                  style={{
+                    width: '8px',
+                    height: '8px',
+                    'border-radius': '50%',
+                    background: badgeColor(),
+                    'flex-shrink': '0',
+                  }}
+                />
+                <Show when={cp()?.status === 'conflict'}>
+                  <span
+                    style={{
+                      'font-size': '11px',
+                      'font-weight': '600',
+                      color: theme.error,
+                    }}
+                  >
+                    {cp()?.conflictingFiles.length}
+                  </span>
+                </Show>
+              </button>
+            </Show>
+          );
+        })()}
       </Show>
       <button
         type="button"
