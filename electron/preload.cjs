@@ -121,6 +121,11 @@ const ALLOWED_CHANNELS = new Set([
   'start_pr_checks_watcher',
   'stop_pr_checks_watcher',
   'pr_checks_update',
+  // Hung-agent detector
+  'hung_agent_update',
+  'nudge_agent',
+  'get_hung_agent_settings',
+  'set_hung_agent_settings',
   // Logging
   'log_from_renderer',
 ]);

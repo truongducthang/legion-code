@@ -133,6 +133,21 @@ export interface StopPrChecksWatcherArgs {
   taskId: string;
 }
 
+export type HungAgentStatus = 'active' | 'idle' | 'hung';
+
+export interface HungAgentUpdatePayload {
+  agentId: string;
+  status: HungAgentStatus;
+  lastDataAt: number;
+  silentMs: number;
+  checkedAt: string;
+}
+
+export interface HungAgentSettings {
+  idleThresholdMs: number;
+  hungThresholdMs: number;
+}
+
 export interface StepEntry {
   summary: string;
   detail?: string;
