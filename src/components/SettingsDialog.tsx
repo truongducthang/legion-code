@@ -33,6 +33,9 @@ import {
 import { CustomAgentEditor } from './CustomAgentEditor';
 import { mod } from '../lib/platform';
 import { DEFAULT_DOCKER_IMAGE, PROJECT_DOCKERFILE_RELATIVE_PATH } from '../lib/docker';
+import { invoke } from '../lib/ipc';
+import { IPC } from '../../electron/ipc/channels';
+import type { HungAgentSettings } from '../ipc/types';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -258,6 +261,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 </span>
               </div>
             </label>
+            <HungAgentSettingsRow />
             <label
               style={{
                 display: 'flex',
@@ -877,5 +881,124 @@ export function SettingsDialog(props: SettingsDialogProps) {
         </div>
       </Show>
     </Dialog>
+  );
+}
+
+/** Two-number-input row for the hung-agent classifier thresholds. Values
+ *  edit in minutes for usability and persist in ms. A value of 0 disables
+ *  that side of the classifier (see hung-agent.ts spec). */
+function HungAgentSettingsRow() {
+  const [idleMin, setIdleMin] = createSignal<number>(5);
+  const [hungMin, setHungMin] = createSignal<number>(15);
+  const [error, setError] = createSignal<string | null>(null);
+  const [saved, setSaved] = createSignal<boolean>(false);
+
+  // Load current settings on first mount.
+  createEffect(() => {
+    invoke<HungAgentSettings>(IPC.GetHungAgentSettings)
+      .then((s) => {
+        setIdleMin(Math.round(s.idleThresholdMs / 60_000));
+        setHungMin(Math.round(s.hungThresholdMs / 60_000));
+      })
+      .catch((e) => console.warn('[hung-agent] failed to load settings:', e));
+  });
+
+  const save = (): void => {
+    setSaved(false);
+    const idle = idleMin();
+    const hung = hungMin();
+    if (!Number.isInteger(idle) || idle < 0) {
+      setError('Idle threshold must be a non-negative whole number of minutes.');
+      return;
+    }
+    if (!Number.isInteger(hung) || hung < 0) {
+      setError('Hung threshold must be a non-negative whole number of minutes.');
+      return;
+    }
+    if (idle > 0 && hung > 0 && hung < idle) {
+      setError('Hung threshold must be greater than or equal to the idle threshold.');
+      return;
+    }
+    const next: HungAgentSettings = {
+      idleThresholdMs: idle * 60_000,
+      hungThresholdMs: hung * 60_000,
+    };
+    invoke<HungAgentSettings>(IPC.SetHungAgentSettings, next as unknown as Record<string, unknown>)
+      .then(() => {
+        setError(null);
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      })
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  };
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '6px',
+        padding: '8px 12px',
+        'border-radius': '8px',
+        background: theme.bgInput,
+        border: `1px solid ${theme.border}`,
+      }}
+    >
+      <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+        <span style={{ 'font-size': '14px', color: theme.fg }}>Hung-agent detector</span>
+        <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+          Mark an agent as quiet then as looking hung after these many minutes of no PTY output. Set
+          either to 0 to disable that side (0 for "hung" disables the detector entirely).
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: '12px', 'align-items': 'center', 'margin-top': '4px' }}>
+        <label style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+          <span style={{ 'font-size': '12px', color: theme.fgMuted }}>Idle (min)</span>
+          <input
+            type="number"
+            min="0"
+            max="1440"
+            value={idleMin()}
+            onInput={(e) => setIdleMin(Number(e.currentTarget.value))}
+            onBlur={save}
+            style={{
+              width: '72px',
+              padding: '4px 6px',
+              background: theme.bgElevated,
+              color: theme.fg,
+              border: `1px solid ${theme.border}`,
+              'border-radius': '6px',
+              'font-size': '12px',
+            }}
+          />
+        </label>
+        <label style={{ display: 'flex', 'align-items': 'center', gap: '6px' }}>
+          <span style={{ 'font-size': '12px', color: theme.fgMuted }}>Hung (min)</span>
+          <input
+            type="number"
+            min="0"
+            max="1440"
+            value={hungMin()}
+            onInput={(e) => setHungMin(Number(e.currentTarget.value))}
+            onBlur={save}
+            style={{
+              width: '72px',
+              padding: '4px 6px',
+              background: theme.bgElevated,
+              color: theme.fg,
+              border: `1px solid ${theme.border}`,
+              'border-radius': '6px',
+              'font-size': '12px',
+            }}
+          />
+        </label>
+        <Show when={saved()}>
+          <span style={{ 'font-size': '12px', color: theme.success }}>Saved</span>
+        </Show>
+      </div>
+      <Show when={error()}>
+        {(msg) => <span style={{ 'font-size': '12px', color: theme.error }}>{msg()}</span>}
+      </Show>
+    </div>
   );
 }
