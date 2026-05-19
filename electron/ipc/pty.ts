@@ -24,6 +24,10 @@ interface PtySession {
   scrollback: RingBuffer;
   /** Assigned container name when running in Docker mode, null otherwise. */
   containerName: string | null;
+  /** ms since epoch of the last `onData` event (or the spawn time before
+   *  any output arrives). Used by the hung-agent detector to classify
+   *  prolonged silence. In-memory only. */
+  lastDataAt: number;
 }
 
 const sessions = new Map<string, PtySession>();
@@ -327,6 +331,7 @@ export function spawnAgent(
     subscribers: new Set(),
     scrollback: new RingBuffer(),
     containerName,
+    lastDataAt: Date.now(),
   };
   sessions.set(args.agentId, session);
 
@@ -372,6 +377,9 @@ export function spawnAgent(
   };
 
   proc.onData((data: string) => {
+    // Stamp activity *before* anything else so the hung-agent detector
+    // always sees the freshest tick even if a subscriber throws.
+    session.lastDataAt = Date.now();
     const chunk = Buffer.from(data, 'utf8');
 
     // Maintain tail buffer for exit diagnostics
@@ -549,6 +557,27 @@ export function getAgentMeta(
 export function getAgentCols(agentId: string): number {
   const s = sessions.get(agentId);
   return s ? s.proc.cols : 80;
+}
+
+/** Snapshot used by the hung-agent classifier. Returns one entry per
+ *  currently-running PTY (exit code still null), excluding shell sessions
+ *  since the detector is only meaningful for agent PTYs. */
+export interface HungAgentSnapshot {
+  agentId: string;
+  taskId: string;
+  lastDataAt: number;
+}
+
+export function snapshotRunningAgents(): HungAgentSnapshot[] {
+  // The sessions map only contains live PTYs: `onExit` deletes the entry
+  // before any external observer can query, so skipping shell sessions is
+  // the only filter the classifier needs.
+  const out: HungAgentSnapshot[] = [];
+  for (const s of sessions.values()) {
+    if (s.isShell) continue;
+    out.push({ agentId: s.agentId, taskId: s.taskId, lastDataAt: s.lastDataAt });
+  }
+  return out;
 }
 
 // --- Docker mode helpers ---
