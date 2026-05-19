@@ -94,6 +94,14 @@ export enum IPC {
   StopRemoteServer = 'stop_remote_server',
   GetRemoteStatus = 'get_remote_status',
 
+  // Telegram control
+  StartTelegramBot = 'start_telegram_bot',
+  StopTelegramBot = 'stop_telegram_bot',
+  GetTelegramStatus = 'get_telegram_status',
+  SetTelegramConfig = 'set_telegram_config',
+  SetFocusedAgent = 'set_focused_agent',
+  ProbeCloudflared = 'probe_cloudflared',
+
   // Plan
   PlanContent = 'plan_content',
   ReadPlanContent = 'read_plan_content',

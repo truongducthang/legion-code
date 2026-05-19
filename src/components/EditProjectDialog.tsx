@@ -34,6 +34,8 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
   const [bookmarks, setBookmarks] = createSignal<TerminalBookmark[]>([]);
   const [newCommand, setNewCommand] = createSignal('');
   const [showImportDialog, setShowImportDialog] = createSignal(false);
+  const [telegramOptIn, setTelegramOptIn] = createSignal(false);
+  const [telegramPauseOnBackpressure, setTelegramPauseOnBackpressure] = createSignal(false);
   let nameRef!: HTMLInputElement;
 
   // Sync signals when project prop changes
@@ -49,6 +51,8 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
     setCoverageReportPath(p.coverageReportPath ?? '');
     setBookmarks(p.terminalBookmarks ? [...p.terminalBookmarks] : []);
     setNewCommand('');
+    setTelegramOptIn(p.telegramOptIn === true);
+    setTelegramPauseOnBackpressure(p.telegramPauseOnBackpressure === true);
     requestAnimationFrame(() => nameRef?.focus());
   });
 
@@ -82,6 +86,8 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
       defaultBaseBranch: defaultBaseBranch() || undefined,
       coverageReportPath: coverageReportPath().trim() || undefined,
       terminalBookmarks: bookmarks(),
+      telegramOptIn: telegramOptIn(),
+      telegramPauseOnBackpressure: telegramOptIn() && telegramPauseOnBackpressure(),
     });
     props.onClose();
   }
@@ -521,6 +527,67 @@ export function EditProjectDialog(props: EditProjectDialogProps) {
                   Add
                 </button>
               </div>
+            </div>
+
+            {/* Telegram control */}
+            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}>
+              <label style={sectionLabelStyle}>Telegram Control</label>
+              <label
+                style={{
+                  display: 'flex',
+                  'align-items': 'center',
+                  gap: '8px',
+                  'font-size': '13px',
+                  color: theme.fg,
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={telegramOptIn()}
+                  onChange={(e) => setTelegramOptIn(e.currentTarget.checked)}
+                />
+                <span>Allow Telegram bot to attach to this project</span>
+              </label>
+              <div
+                style={{
+                  'font-size': '12px',
+                  color: theme.fgSubtle,
+                  padding: '0 2px 0 24px',
+                }}
+              >
+                When off, the bot cannot read scrollback, push notifications, or accept commands
+                targeting this project's agents.
+              </div>
+              <Show when={telegramOptIn()}>
+                <label
+                  style={{
+                    display: 'flex',
+                    'align-items': 'center',
+                    gap: '8px',
+                    'font-size': '13px',
+                    color: theme.fg,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={telegramPauseOnBackpressure()}
+                    onChange={(e) => setTelegramPauseOnBackpressure(e.currentTarget.checked)}
+                  />
+                  <span>Pause agents when Telegram tail backpressures</span>
+                </label>
+                <div
+                  style={{
+                    'font-size': '12px',
+                    color: theme.fgSubtle,
+                    padding: '0 2px 0 24px',
+                  }}
+                >
+                  Pauses the agent's PTY when live-tail sends are dropped for 5+ seconds in a row.
+                  Trades agent throughput for keeping Telegram's live view in sync.
+                </div>
+              </Show>
             </div>
 
             {/* Buttons */}

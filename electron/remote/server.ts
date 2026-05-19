@@ -38,6 +38,27 @@ interface RemoteServer {
   tailscaleUrl: string | null;
   wifiUrl: string | null;
   connectedClients: () => number;
+  /** Resolved port the underlying http server actually bound to. May differ
+   *  from `opts.port` when port `0` is used (tests). */
+  addressInfo: () => { port: number; address: string } | null;
+}
+
+/**
+ * Telegram Mini App auth hook. When supplied, the server exposes
+ * POST `/api/telegram-auth` which accepts a raw `initData` body and:
+ *   - returns the server's session token on success (200)
+ *   - returns 401 on signature / freshness / allowlist failure
+ *   - returns 404 when `verify` resolves to `false` (bot disabled)
+ *   - returns 404 when this hook is not supplied at all
+ */
+export interface TelegramAuthHook {
+  /**
+   * @param initData The raw `window.Telegram.WebApp.initData` query string.
+   * @returns        `true`  → mint and return the session token (200)
+   *                 `false` → telegram bot is disabled or has no token (404)
+   * @throws         on signature / freshness / allowlist failure (401)
+   */
+  verify: (initData: string) => Promise<boolean>;
 }
 
 /** Detect available network IPs (WiFi and Tailscale). */
@@ -102,6 +123,7 @@ export function startRemoteServer(opts: {
     exitCode: number | null;
     lastLine: string;
   };
+  telegramAuth?: TelegramAuthHook;
 }): RemoteServer {
   const token = randomBytes(24).toString('base64url');
   const ips = getNetworkIps();
@@ -130,6 +152,12 @@ export function startRemoteServer(opts: {
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+
+    // --- Telegram Mini App auth (public route — mints a session token) ---
+    if (url.pathname === '/api/telegram-auth' && req.method === 'POST') {
+      handleTelegramAuth(req, res, opts.telegramAuth, token, SECURITY_HEADERS);
+      return;
+    }
 
     // --- API routes (require auth) ---
     if (url.pathname.startsWith('/api/')) {
@@ -413,6 +441,11 @@ export function startRemoteServer(opts: {
       return cur.tailscale ? `http://${cur.tailscale}:${opts.port}?token=${token}` : null;
     },
     connectedClients: () => authenticatedClients.size,
+    addressInfo: () => {
+      const addr = server.address();
+      if (!addr || typeof addr === 'string') return null;
+      return { port: addr.port, address: addr.address };
+    },
     stop: () =>
       new Promise<void>((resolve) => {
         unsubSpawn();
@@ -427,4 +460,66 @@ export function startRemoteServer(opts: {
         });
       }),
   };
+}
+
+/** Maximum size for a POST body to /api/telegram-auth. Telegram's initData
+ *  payloads are short (well under 1 KB in practice); cap at 4 KB. */
+const TELEGRAM_AUTH_MAX_BODY = 4 * 1024;
+
+function handleTelegramAuth(
+  req: IncomingMessage,
+  res: ServerResponse,
+  hook: TelegramAuthHook | undefined,
+  sessionToken: string,
+  securityHeaders: Record<string, string>,
+): void {
+  if (!hook) {
+    res.writeHead(404, { ...securityHeaders, 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'not found' }));
+    return;
+  }
+
+  const chunks: Buffer[] = [];
+  let totalLen = 0;
+  let aborted = false;
+
+  req.on('data', (chunk: Buffer) => {
+    if (aborted) return;
+    totalLen += chunk.length;
+    if (totalLen > TELEGRAM_AUTH_MAX_BODY) {
+      aborted = true;
+      res.writeHead(413, { ...securityHeaders, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'payload too large' }));
+      req.destroy();
+      return;
+    }
+    chunks.push(chunk);
+  });
+
+  req.on('end', () => {
+    if (aborted) return;
+    const body = Buffer.concat(chunks).toString('utf8');
+    hook
+      .verify(body)
+      .then((ok) => {
+        if (!ok) {
+          // Bot disabled or no token configured — pretend the route does not exist.
+          res.writeHead(404, { ...securityHeaders, 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'not found' }));
+          return;
+        }
+        res.writeHead(200, { ...securityHeaders, 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ token: sessionToken }));
+      })
+      .catch(() => {
+        res.writeHead(401, { ...securityHeaders, 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unauthorized' }));
+      });
+  });
+
+  req.on('error', () => {
+    if (aborted || res.headersSent) return;
+    res.writeHead(400, { ...securityHeaders, 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'bad request' }));
+  });
 }

@@ -60,6 +60,7 @@ import {
 } from './lib/shortcuts';
 import { resolvedBindings, loadKeybindings, dismissMigrationBanner } from './store/keybindings';
 import { setupAutosave } from './store/autosave';
+import { setupFocusedAgentSync } from './store/telegram';
 import { osIsDark } from './lib/os-appearance';
 import { applyAppearanceMode } from './store/store';
 import { isMac, mod } from './lib/platform';
@@ -369,6 +370,7 @@ function App() {
     await restoreWindowState();
     await captureWindowState();
     setupAutosave();
+    setupFocusedAgentSync();
     startTaskStatusPolling();
     const stopNotificationWatcher = startDesktopNotificationWatcher(windowFocused);
     const stopPrChecksSubscription = startPrChecksSubscription();

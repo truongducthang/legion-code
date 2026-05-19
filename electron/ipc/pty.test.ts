@@ -92,7 +92,10 @@ import {
   projectImageTag,
   resolveProjectDockerfile,
   spawnAgent,
+  subscribeToAgentExit,
+  unsubscribeFromAgentExit,
   validateCommand,
+  type AgentExitInfo,
 } from './pty.js';
 
 let tempPaths: string[] = [];
@@ -570,6 +573,111 @@ describe('dockerImageExists', () => {
         dockerfilePath: '/nonexistent/Dockerfile',
       }),
     ).resolves.toBe(false);
+  });
+});
+
+describe('subscribeToAgentExit', () => {
+  function lastProc(): ReturnType<typeof mockPtySpawn> {
+    const results = mockPtySpawn.mock.results;
+    return results[results.length - 1].value as ReturnType<typeof mockPtySpawn>;
+  }
+
+  it('fires once with { exitCode, signal, lastOutput } when the agent exits', () => {
+    const win = createMockWindow();
+    const args = buildSpawnArgs({ dockerMode: false, command: 'sh', args: [] });
+    spawnAgent(win, args);
+    const proc = lastProc();
+
+    const calls: AgentExitInfo[] = [];
+    const ok = subscribeToAgentExit(args.agentId, (info) => calls.push(info));
+    expect(ok).toBe(true);
+
+    proc.emitData('first line\nsecond line\n');
+    proc.emitExit({ exitCode: 42, signal: undefined });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].exitCode).toBe(42);
+    expect(calls[0].signal).toBeNull();
+    expect(calls[0].lastOutput).toEqual(['first line', 'second line']);
+  });
+
+  it('coerces a numeric exit signal to its string form', () => {
+    const win = createMockWindow();
+    const args = buildSpawnArgs({ dockerMode: false, command: 'sh', args: [] });
+    spawnAgent(win, args);
+    const proc = lastProc();
+
+    const calls: AgentExitInfo[] = [];
+    subscribeToAgentExit(args.agentId, (info) => calls.push(info));
+
+    proc.emitExit({ exitCode: 0, signal: 15 });
+
+    expect(calls[0].signal).toBe('15');
+  });
+
+  it('does not fire after unsubscribe', () => {
+    const win = createMockWindow();
+    const args = buildSpawnArgs({ dockerMode: false, command: 'sh', args: [] });
+    spawnAgent(win, args);
+    const proc = lastProc();
+
+    const cb = vi.fn();
+    subscribeToAgentExit(args.agentId, cb);
+    unsubscribeFromAgentExit(args.agentId, cb);
+
+    proc.emitExit({ exitCode: 0, signal: undefined });
+
+    expect(cb).not.toHaveBeenCalled();
+  });
+
+  it('still fires the renderer Exit event alongside exit subscribers', () => {
+    const win = createMockWindow();
+    const args = buildSpawnArgs({
+      dockerMode: false,
+      command: 'sh',
+      args: [],
+      onOutput: { __CHANNEL_ID__: 'channel-x' },
+    });
+    spawnAgent(win, args);
+    const proc = lastProc();
+
+    const cb = vi.fn();
+    subscribeToAgentExit(args.agentId, cb);
+
+    proc.emitData('output\n');
+    proc.emitExit({ exitCode: 0, signal: undefined });
+
+    expect(cb).toHaveBeenCalledTimes(1);
+    const sendMock = win.webContents.send as ReturnType<typeof vi.fn>;
+    const exitSend = sendMock.mock.calls.find(
+      ([, payload]) => (payload as { type?: string }).type === 'Exit',
+    );
+    expect(exitSend).toBeTruthy();
+    if (!exitSend) return;
+    expect(exitSend[1]).toMatchObject({
+      type: 'Exit',
+      data: { exit_code: 0, signal: null, last_output: ['output'] },
+    });
+  });
+
+  it('returns false when subscribing to an unknown agent', () => {
+    const ok = subscribeToAgentExit('no-such-agent', () => {});
+    expect(ok).toBe(false);
+  });
+
+  it('fans out to multiple subscribers', () => {
+    const win = createMockWindow();
+    const args = buildSpawnArgs({ dockerMode: false, command: 'sh', args: [] });
+    spawnAgent(win, args);
+    const proc = lastProc();
+
+    const calls: number[] = [];
+    subscribeToAgentExit(args.agentId, () => calls.push(1));
+    subscribeToAgentExit(args.agentId, () => calls.push(2));
+
+    proc.emitExit({ exitCode: 0, signal: undefined });
+
+    expect(calls.sort()).toEqual([1, 2]);
   });
 });
 

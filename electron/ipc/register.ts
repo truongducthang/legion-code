@@ -31,6 +31,18 @@ import { initPrChecks, startPrChecksWatcher, stopPrChecksWatcher, isPrUrl } from
 import { readCoverageSummary } from './coverage.js';
 import { startRemoteServer } from '../remote/server.js';
 import {
+  startTelegramBot,
+  stopTelegramBot,
+  getStatus as getTelegramStatus,
+  applyConfigUpdate as applyTelegramConfigUpdate,
+  setFocusedAgentId,
+  onRendererStateSaved,
+  verifyTelegramInitData,
+  setRemoteServerPort as setTelegramRemoteServerPort,
+  probeTelegramTunnel,
+  type TelegramConfig,
+} from '../telegram/index.js';
+import {
   getGitIgnoredDirs,
   getMainBranch,
   getCurrentBranch,
@@ -541,6 +553,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
   ipcMain.handle(IPC.SaveAppState, (_e, args) => {
     assertString(args.json, 'json');
     syncTaskNamesFromJson(args.json);
+    onRendererStateSaved(args.json);
     return saveAppState(args.json);
   });
   ipcMain.handle(IPC.LoadAppState, () => {
@@ -941,7 +954,11 @@ export function registerAllHandlers(win: BrowserWindow): void {
           lastLine: '',
         };
       },
+      telegramAuth: { verify: verifyTelegramInitData },
     });
+    // Inform the telegram module so it can decide whether to spawn the
+    // cloudflared auto-tunnel for the Mini App.
+    void setTelegramRemoteServerPort(remoteServer.port);
     return {
       url: remoteServer.url,
       wifiUrl: remoteServer.wifiUrl,
@@ -955,6 +972,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
     if (remoteServer) {
       await remoteServer.stop();
       remoteServer = null;
+      await setTelegramRemoteServerPort(null);
     }
   });
 
@@ -969,6 +987,46 @@ export function registerAllHandlers(win: BrowserWindow): void {
       token: remoteServer.token,
       port: remoteServer.port,
     };
+  });
+
+  // --- Telegram control ---
+  ipcMain.handle(IPC.StartTelegramBot, async () => {
+    return await startTelegramBot();
+  });
+
+  ipcMain.handle(IPC.StopTelegramBot, async () => {
+    return await stopTelegramBot();
+  });
+
+  ipcMain.handle(IPC.GetTelegramStatus, async () => {
+    return await getTelegramStatus();
+  });
+
+  ipcMain.handle(
+    IPC.SetTelegramConfig,
+    async (
+      _e,
+      args: { config?: Partial<TelegramConfig>; token?: string; openaiApiKey?: string },
+    ) => {
+      if (args?.token !== undefined) assertString(args.token, 'token');
+      if (args?.openaiApiKey !== undefined) assertString(args.openaiApiKey, 'openaiApiKey');
+      return await applyTelegramConfigUpdate({
+        config: args?.config,
+        token: args?.token,
+        openaiApiKey: args?.openaiApiKey,
+      });
+    },
+  );
+
+  ipcMain.handle(IPC.SetFocusedAgent, (_e, args: { agentId: string | null }) => {
+    if (args?.agentId !== null && typeof args?.agentId !== 'string') {
+      throw new Error('agentId must be a string or null');
+    }
+    setFocusedAgentId(args.agentId);
+  });
+
+  ipcMain.handle(IPC.ProbeCloudflared, async () => {
+    return await probeTelegramTunnel();
   });
 
   // --- Forward window events to renderer ---

@@ -11,6 +11,7 @@ import { stopAllPlanWatchers } from './ipc/plans.js';
 import { stopAllStepsWatchers } from './ipc/steps.js';
 import { IPC } from './ipc/channels.js';
 import { resolveUserShell } from './user-shell.js';
+import { bootstrapTelegram, stopTelegramBot } from './telegram/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -201,6 +202,20 @@ app.whenReady().then(() => {
   );
 
   createWindow();
+
+  // Telegram bot auto-resume. The bot starts before the renderer loads so
+  // remote control works without the desktop UI being open.
+  void bootstrapTelegram({
+    onAllowedChatsAutoRemove: (chatId) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('telegram_allowed_chats_changed', { removed: chatId });
+      }
+    },
+  }).catch((err) => console.warn('[main] telegram bootstrap failed:', err));
+});
+
+app.on('before-quit', () => {
+  void stopTelegramBot().catch(() => undefined);
 });
 
 app.on('before-quit', () => {

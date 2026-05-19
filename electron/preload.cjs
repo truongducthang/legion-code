@@ -89,6 +89,13 @@ const ALLOWED_CHANNELS = new Set([
   'start_remote_server',
   'stop_remote_server',
   'get_remote_status',
+  // Telegram control
+  'start_telegram_bot',
+  'stop_telegram_bot',
+  'get_telegram_status',
+  'set_telegram_config',
+  'set_focused_agent',
+  'probe_cloudflared',
   // Plan
   'plan_content',
   'read_plan_content',

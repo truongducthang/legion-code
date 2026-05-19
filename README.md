@@ -169,6 +169,122 @@ Requires [Node.js](https://nodejs.org/) v18+.
 
 If Parallel Code saves you time, consider giving it a [star on GitHub](https://github.com/johannesjo/parallel-code). It helps others find the project.
 
+## Remote control via Telegram
+
+In addition to the QR-code mobile path, Parallel Code can be driven from a
+Telegram bot. Telegram's relay servers reach the desktop from any network
+(mobile data, café Wi-Fi, locked-down corporate LANs) and deliver native
+push notifications when an agent stops to ask a question.
+
+### One-time setup
+
+1. **Create a bot.** Message [@BotFather](https://t.me/BotFather) on Telegram,
+   send `/newbot`, follow the prompts, and copy the token it returns.
+2. **Paste the token.** Open Parallel Code → **Settings → Telegram**, paste
+   the token, click **Save**. The token is encrypted via the system
+   keychain (`safeStorage`) — macOS Keychain on macOS, libsecret on Linux —
+   and never leaves the desktop. On a Linux box without libsecret installed
+   the field refuses to save and surfaces a verbatim install hint.
+3. **Allow your chat.** Toggle the master switch on, then send `/start`
+   from your Telegram chat. The bot replies with the chat id. Paste it
+   into **Allowed chats** in Settings and send `/start` again — the bot is
+   now authorised for that chat only.
+4. **Opt projects in.** Right-click any project → _Edit project_ → tick
+   _Allow Telegram bot to attach to this project_. The bot refuses to read
+   scrollback, push notifications, or accept commands for projects whose
+   opt-in is off — the master toggle and the bot token alone are not
+   enough.
+
+### Commands
+
+Send any of these from an allowed chat:
+
+```
+/agents              list active agents
+/status <id>         last 30 scrollback lines
+/prompt <id> <text>  write text into the agent's PTY
+/approve <id>        write y
+/deny <id>           write n
+/kill <id>           terminate the agent
+/diff <id>           git diff --stat in the agent's worktree
+/tail <id>           live-tail the agent (one edit per second)
+/untail <id>         stop tailing
+/steps <id>          step-tracking progress
+/cov <id>            coverage summary
+/run <id> <bookmark> execute a saved terminal bookmark
+/ask <id> <question> route through ask-code
+/help                this list
+```
+
+Short aliases: `/a /s /p /d /k /t /u`. Reply to any bot message tagged
+with an agent (status replies, prompt acks, live-tail messages,
+notifications) and the bot infers the agent without needing `<id>`.
+
+### Mini App (full SPA inside Telegram)
+
+When the bot has a **public base URL** configured, the **Open** button on
+notifications launches the mobile SPA inside Telegram's WebApp container
+with no QR-code step. Authentication is automatic via Telegram's signed
+`initData` payload — Parallel Code verifies the HMAC against your bot
+token and mints a session token without prompting.
+
+Pick one of these to obtain a public URL:
+
+- **Auto-tunnel via cloudflared** — install `cloudflared` (e.g. `brew
+install cloudflared`, or download from
+  [developers.cloudflare.com](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)),
+  then tick _cloudflared auto-tunnel_ in Settings. The desktop spawns
+  `cloudflared tunnel --url http://localhost:<port>` whenever the bot
+  starts and publishes a free `https://<random>.trycloudflare.com` URL.
+- **Tailscale Funnel**, **ngrok**, or your own reverse proxy — paste the
+  URL into the _Public base URL_ field.
+
+If no public URL is configured the bot still works end-to-end for
+commands, notifications, voice prompts, and file uploads — the Mini App
+flow is optional.
+
+### Voice prompts (optional)
+
+The bot can transcribe voice messages and inject the text into the
+focused agent's PTY. Two runtimes:
+
+- **whisper.cpp** — point the _whisper.cpp binary path_ in Settings at a
+  compiled `whisper` binary. Local, free, offline.
+- **OpenAI Whisper API** — paste an API key. The key is stored encrypted
+  via `safeStorage` and is never visible to the renderer.
+
+Reply to a notification to route the transcript to that specific agent;
+otherwise the bot writes into the agent currently focused on the
+desktop. Voice support is off by default and the controls only appear
+when at least one allowed chat exists.
+
+### File uploads
+
+Send any document or photo (≤ 20 MB) from an allowed chat and the bot
+downloads it under `~/.../tmp/parallel-code-telegram-uploads/`. The
+reply includes the absolute path and a _Paste path into agent_ button
+that writes the shell-escaped path into the focused agent's PTY — useful
+for sharing a screenshot or log file with a running session.
+
+### Privacy and safety caveats
+
+- Agent output crosses Telegram's servers. The bot applies a baseline
+  redaction filter (AWS access-key shape, JWTs, GitHub PATs, OpenAI
+  `sk-` keys, common `KEY=` / `TOKEN=` assignments) before any output
+  leaves the desktop, and you can add custom patterns under
+  _Redaction patterns_ in Settings. Redaction is best-effort — do not
+  rely on it as a secret-management strategy.
+- Project opt-in is mandatory. Off by default. A project that opts out
+  while a live-tail is running closes the tail immediately.
+- Every command, inline callback, voice ingest, file ingest, and config
+  change is recorded as a structured audit entry under
+  `telegram.audit`. Token values, transcripts, file contents, and
+  scrollback text are never written to the audit log.
+- Rate limits stay inside Telegram's per-chat 1/sec edit limit. When the
+  Telegram connection is slow, the bot can optionally pause the agent
+  (per-project toggle `Pause agents when Telegram tail backpressures`)
+  rather than build an unbounded queue.
+
 ## License
 
 MIT
