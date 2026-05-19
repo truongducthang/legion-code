@@ -336,12 +336,12 @@ const inputStyle = {
 };
 
 const buttonChromeStyle = {
-  background: 'transparent',
+  background: 'none',
   border: 'none',
   color: '#2ec8ff',
-  'font-size': '16px',
+  'font-size': '17px',
   cursor: 'pointer',
-  padding: '4px 8px',
+  padding: '8px 10px',
   'touch-action': 'manipulation',
 };
 
