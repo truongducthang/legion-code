@@ -23,3 +23,7 @@ docs/
 /.ripgreprc
 /.zprofile
 /.zshrc
+
+CLAUDE.local.md
+pnpm-lock.yaml
+.contrib
