@@ -132,6 +132,11 @@ const ALLOWED_CHANNELS = new Set([
   'start_conflict_preflight',
   'stop_conflict_preflight',
   'conflict_preflight_update',
+  // Hung-agent detector
+  'hung_agent_update',
+  'nudge_agent',
+  'get_hung_agent_settings',
+  'set_hung_agent_settings',
   // Logging
   'log_from_renderer',
 ]);

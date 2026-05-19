@@ -33,6 +33,12 @@ import {
   startConflictPreflight,
   stopConflictPreflight,
 } from './conflict-preflight.js';
+import {
+  initHungAgent,
+  getHungAgentSettings,
+  setHungAgentSettings,
+  nudgeAgent,
+} from './hung-agent.js';
 import { readCoverageSummary } from './coverage.js';
 import { startRemoteServer, type SpawnTaskRequest } from '../remote/server.js';
 import type { RemoteProject, RemoteBranch, SpawnResultMessage } from '../remote/protocol.js';
@@ -713,6 +719,19 @@ export function registerAllHandlers(win: BrowserWindow): void {
   ipcMain.handle(IPC.StopConflictPreflight, (_e, args) => {
     assertString(args.taskId, 'taskId');
     stopConflictPreflight(args.taskId);
+  });
+  // --- Hung-agent detector ---
+  initHungAgent(win, {
+    getTaskName: (taskId: string) => taskNames.get(taskId) ?? taskId,
+    settingsDir: getKeybindingsDir(),
+  });
+  ipcMain.handle(IPC.NudgeAgent, (_e, args) => {
+    assertString(args.agentId, 'agentId');
+    nudgeAgent(args.agentId);
+  });
+  ipcMain.handle(IPC.GetHungAgentSettings, () => getHungAgentSettings());
+  ipcMain.handle(IPC.SetHungAgentSettings, (_e, args) => {
+    return setHungAgentSettings(args);
   });
 
   // --- Steps content (one-shot read) ---

@@ -69,6 +69,7 @@ import { ArenaOverlay } from './arena/ArenaOverlay';
 import { startDesktopNotificationWatcher } from './store/desktopNotifications';
 import { startPrChecksSubscription } from './store/pr-checks';
 import { startConflictPreflightSubscription } from './store/conflict-preflight';
+import { startHungAgentSubscription } from './store/hung-agent';
 
 const MIN_WINDOW_DIMENSION = 100;
 
@@ -376,6 +377,7 @@ function App() {
     const stopNotificationWatcher = startDesktopNotificationWatcher(windowFocused);
     const stopPrChecksSubscription = startPrChecksSubscription();
     const stopConflictPreflightSubscription = startConflictPreflightSubscription();
+    const stopHungAgentSubscription = startHungAgentSubscription();
 
     // Listen for plan content pushed from backend plan watcher
     const offPlanContent = window.electron.ipcRenderer.on(IPC.PlanContent, (data: unknown) => {
@@ -567,6 +569,7 @@ function App() {
       stopNotificationWatcher();
       stopPrChecksSubscription();
       stopConflictPreflightSubscription();
+      stopHungAgentSubscription();
       offPlanContent();
       offStepsContent();
       unlistenFocusChanged?.();

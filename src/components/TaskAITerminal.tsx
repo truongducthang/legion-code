@@ -21,7 +21,8 @@ import { TerminalView } from './TerminalView';
 import { Dialog } from './Dialog';
 import { theme } from '../lib/theme';
 import { sf } from '../lib/fontScale';
-import { invoke } from '../lib/ipc';
+import { invoke, fireAndForget } from '../lib/ipc';
+import { getHungAgentState } from '../store/hung-agent';
 import { getTaskDockerOverlayLabel } from '../lib/docker';
 import { IPC } from '../../electron/ipc/channels';
 import { createHighlightedMarkdown } from '../lib/marked-shiki';
@@ -579,6 +580,9 @@ function AgentTerminalPane(props: {
                 </Show>
               </div>
             </Show>
+            <Show when={a().status === 'running'}>
+              <HungAgentBadge agentId={a().id} />
+            </Show>
             <Show when={`${a().id}:${a().generation}`} keyed>
               <TerminalView
                 taskId={props.task.id}
@@ -840,5 +844,109 @@ function AgentRestartMenu(props: { agentId: string; agentDefId: string }) {
         </div>
       </Show>
     </span>
+  );
+}
+
+function formatSilence(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rem = minutes - hours * 60;
+  return rem === 0 ? `${hours} h` : `${hours} h ${rem} min`;
+}
+
+function HungAgentBadge(props: { agentId: string }) {
+  const state = () => getHungAgentState(props.agentId);
+  const status = () => state()?.status;
+  const silentLabel = () => {
+    const s = state();
+    return s ? formatSilence(s.silentMs) : '';
+  };
+
+  return (
+    <Show when={status() === 'idle' || status() === 'hung'}>
+      <Show
+        when={status() === 'hung'}
+        fallback={
+          <div
+            class="hung-agent-idle-hint"
+            title={`No output for ${silentLabel()}`}
+            style={{
+              position: 'absolute',
+              top: '8px',
+              right: '12px',
+              'z-index': '10',
+              'font-size': sf(11),
+              color: theme.fgMuted,
+              background: 'color-mix(in srgb, var(--island-bg) 80%, transparent)',
+              padding: '2px 8px',
+              'border-radius': '6px',
+              border: `1px solid ${theme.border}`,
+            }}
+          >
+            Quiet · {silentLabel()}
+          </div>
+        }
+      >
+        <div
+          class="hung-agent-badge"
+          style={{
+            position: 'absolute',
+            top: '8px',
+            right: '12px',
+            'z-index': '10',
+            'font-size': sf(12),
+            color: theme.warning,
+            background: 'color-mix(in srgb, var(--island-bg) 80%, transparent)',
+            padding: '4px 12px',
+            'border-radius': '8px',
+            border: `1px solid ${theme.warning}`,
+            display: 'flex',
+            'align-items': 'center',
+            gap: '8px',
+          }}
+        >
+          <span>Looks hung · Silent {silentLabel()}</span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              fireAndForget(IPC.NudgeAgent, { agentId: props.agentId });
+            }}
+            style={{
+              background: theme.bgElevated,
+              border: `1px solid ${theme.border}`,
+              color: theme.fg,
+              padding: '2px 8px',
+              'border-radius': '4px',
+              cursor: 'pointer',
+              'font-size': sf(11),
+            }}
+            title="Send a newline (one \\r) to the agent"
+          >
+            Send newline
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              fireAndForget(IPC.KillAgent, { agentId: props.agentId });
+            }}
+            style={{
+              background: theme.bgElevated,
+              border: `1px solid ${theme.border}`,
+              color: theme.fg,
+              padding: '2px 8px',
+              'border-radius': '4px',
+              cursor: 'pointer',
+              'font-size': sf(11),
+            }}
+            title="Kill the agent process"
+          >
+            Kill
+          </button>
+        </div>
+      </Show>
+    </Show>
   );
 }

@@ -147,6 +147,11 @@ export enum IPC {
   StartConflictPreflight = 'start_conflict_preflight',
   StopConflictPreflight = 'stop_conflict_preflight',
   ConflictPreflightUpdate = 'conflict_preflight_update',
+  // Hung-agent detector
+  HungAgentUpdate = 'hung_agent_update',
+  NudgeAgent = 'nudge_agent',
+  GetHungAgentSettings = 'get_hung_agent_settings',
+  SetHungAgentSettings = 'set_hung_agent_settings',
 
   // Logging
   LogFromRenderer = 'log_from_renderer',
