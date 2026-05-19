@@ -91,6 +91,7 @@ import {
   killAllAgents,
   projectImageTag,
   resolveProjectDockerfile,
+  snapshotRunningAgents,
   spawnAgent,
   validateCommand,
 } from './pty.js';
@@ -570,6 +571,55 @@ describe('dockerImageExists', () => {
         dockerfilePath: '/nonexistent/Dockerfile',
       }),
     ).resolves.toBe(false);
+  });
+});
+
+describe('snapshotRunningAgents', () => {
+  it('initialises lastDataAt to spawn time and stamps it on each onData event', () => {
+    const before = Date.now();
+    const agentId = 'agent-snapshot-stamp';
+    spawnAgent(createMockWindow(), buildSpawnArgs({ agentId, dockerMode: false, isShell: false }));
+    const after = Date.now();
+
+    const initial = snapshotRunningAgents().find((s) => s.agentId === agentId);
+    if (!initial) throw new Error('snapshot missing fresh agent');
+    expect(initial.lastDataAt).toBeGreaterThanOrEqual(before);
+    expect(initial.lastDataAt).toBeLessThanOrEqual(after);
+
+    // Emit data and verify the timestamp advances.
+    const proc = mockPtySpawn.mock.results.at(-1)?.value as ReturnType<typeof mockPtySpawn>;
+    const sleepUntil = Date.now() + 5;
+    while (Date.now() <= sleepUntil) {
+      // busy-wait so we cross at least one ms tick deterministically
+    }
+    proc.emitData('hi');
+    const stamped = snapshotRunningAgents().find((s) => s.agentId === agentId);
+    if (!stamped) throw new Error('snapshot lost agent after emit');
+    expect(stamped.lastDataAt).toBeGreaterThan(initial.lastDataAt);
+  });
+
+  it('excludes shell sessions from the snapshot', () => {
+    const shellId = 'agent-shell';
+    const agentId = 'agent-real';
+    spawnAgent(
+      createMockWindow(),
+      buildSpawnArgs({ agentId: shellId, dockerMode: false, isShell: true }),
+    );
+    spawnAgent(createMockWindow(), buildSpawnArgs({ agentId, dockerMode: false, isShell: false }));
+    const ids = snapshotRunningAgents().map((s) => s.agentId);
+    expect(ids).toContain(agentId);
+    expect(ids).not.toContain(shellId);
+  });
+
+  it('drops sessions after their PTY exits', () => {
+    const agentId = 'agent-exit';
+    spawnAgent(createMockWindow(), buildSpawnArgs({ agentId, dockerMode: false, isShell: false }));
+    expect(snapshotRunningAgents().some((s) => s.agentId === agentId)).toBe(true);
+
+    const proc = mockPtySpawn.mock.results.at(-1)?.value as ReturnType<typeof mockPtySpawn>;
+    proc.emitExit({ exitCode: 0, signal: undefined });
+
+    expect(snapshotRunningAgents().some((s) => s.agentId === agentId)).toBe(false);
   });
 });
 
