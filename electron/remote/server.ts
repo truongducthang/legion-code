@@ -18,7 +18,15 @@ import {
   getAgentCols,
   onPtyEvent,
 } from '../ipc/pty.js';
-import { parseClientMessage, type ServerMessage, type RemoteAgent } from './protocol.js';
+import {
+  parseClientMessage,
+  type ServerMessage,
+  type RemoteAgent,
+  type RemoteProject,
+  type RemoteBranch,
+  type SpawnResultMessage,
+  type SpawnErrorCode,
+} from './protocol.js';
 
 const MIME: Record<string, string> = {
   '.html': 'text/html',
@@ -114,6 +122,18 @@ function buildAgentList(
   return Array.from(byTask.values());
 }
 
+export interface SpawnTaskRequest {
+  requestId: string;
+  projectRoot: string;
+  baseBranch: string | null;
+  agentId: string;
+  taskName: string;
+  prompt: string;
+}
+
+/** 2 s minimum between successful spawns per authenticated client. */
+const SPAWN_MIN_INTERVAL_MS = 2_000;
+
 export function startRemoteServer(opts: {
   port: number;
   staticDir: string;
@@ -124,6 +144,9 @@ export function startRemoteServer(opts: {
     lastLine: string;
   };
   telegramAuth?: TelegramAuthHook;
+  listProjects?: () => Promise<RemoteProject[]>;
+  listBranches?: (projectRoot: string) => Promise<RemoteBranch[]>;
+  spawnTask?: (req: SpawnTaskRequest) => Promise<SpawnResultMessage>;
 }): RemoteServer {
   const token = randomBytes(24).toString('base64url');
   const ips = getNetworkIps();
@@ -259,6 +282,26 @@ export function startRemoteServer(opts: {
   const clientSubs = new WeakMap<WebSocket, Map<string, (data: string) => void>>();
   const authenticatedClients = new Set<WebSocket>();
   const authTimers = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
+  // Per-client spawn guards: in-flight flag + last successful spawn timestamp.
+  const spawnInFlight = new WeakMap<WebSocket, boolean>();
+  const lastSpawnAt = new WeakMap<WebSocket, number>();
+
+  function sendSpawnError(
+    ws: WebSocket,
+    requestId: string,
+    error: SpawnErrorCode,
+    message: string,
+  ): void {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const msg: SpawnResultMessage = {
+      type: 'spawn_result',
+      requestId,
+      ok: false,
+      error,
+      message,
+    };
+    ws.send(JSON.stringify(msg));
+  }
 
   function broadcast(msg: ServerMessage): void {
     const json = JSON.stringify(msg);
@@ -399,6 +442,82 @@ export function startRemoteServer(opts: {
             unsubscribeFromAgent(msg.agentId, cb);
             subs?.delete(msg.agentId);
           }
+          break;
+        }
+
+        case 'list_projects': {
+          const reply = async () => {
+            const list = opts.listProjects ? await opts.listProjects().catch(() => []) : [];
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'projects', list } satisfies ServerMessage));
+            }
+          };
+          void reply();
+          break;
+        }
+
+        case 'list_branches': {
+          const projectRoot = msg.projectRoot;
+          const reply = async () => {
+            const list = opts.listBranches
+              ? await opts.listBranches(projectRoot).catch(() => [])
+              : [];
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(
+                JSON.stringify({
+                  type: 'branches',
+                  projectRoot,
+                  list,
+                } satisfies ServerMessage),
+              );
+            }
+          };
+          void reply();
+          break;
+        }
+
+        case 'spawn_task': {
+          const { requestId } = msg;
+          const spawnTask = opts.spawnTask;
+          if (!spawnTask) {
+            sendSpawnError(ws, requestId, 'spawn_failed', 'unsupported');
+            break;
+          }
+          if (spawnInFlight.get(ws)) {
+            sendSpawnError(ws, requestId, 'spawn_failed', 'busy');
+            break;
+          }
+          const since = Date.now() - (lastSpawnAt.get(ws) ?? 0);
+          if (since < SPAWN_MIN_INTERVAL_MS) {
+            sendSpawnError(ws, requestId, 'spawn_failed', 'rate_limited');
+            break;
+          }
+          spawnInFlight.set(ws, true);
+          void (async () => {
+            try {
+              const result = await spawnTask({
+                requestId,
+                projectRoot: msg.projectRoot,
+                baseBranch: msg.baseBranch,
+                agentId: msg.agentId,
+                taskName: msg.taskName,
+                prompt: msg.prompt,
+              });
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify(result));
+              }
+              if (result.ok) lastSpawnAt.set(ws, Date.now());
+            } catch (err) {
+              sendSpawnError(
+                ws,
+                requestId,
+                'spawn_failed',
+                err instanceof Error ? err.message : String(err),
+              );
+            } finally {
+              spawnInFlight.set(ws, false);
+            }
+          })();
           break;
         }
       }

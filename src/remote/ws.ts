@@ -1,6 +1,12 @@
 import { createSignal } from 'solid-js';
 import { getToken, clearToken } from './auth';
-import type { ServerMessage, RemoteAgent } from '../../electron/remote/protocol';
+import type {
+  ServerMessage,
+  RemoteAgent,
+  RemoteProject,
+  RemoteBranch,
+  SpawnResultMessage,
+} from '../../electron/remote/protocol';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
@@ -14,6 +20,11 @@ const scrollbackListeners = new Map<string, Set<ScrollbackListener>>();
 
 let ws: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Pending one-shot replies keyed by message id. Resolved by ws.onmessage. */
+const pendingProjects: Array<(list: RemoteProject[]) => void> = [];
+const pendingBranches = new Map<string, Array<(list: RemoteBranch[]) => void>>();
+const pendingSpawns = new Map<string, (msg: SpawnResultMessage) => void>();
 
 export { agents, status };
 
@@ -83,6 +94,30 @@ export function connect(): void {
           ),
         );
         break;
+
+      case 'projects': {
+        // Best-effort: hand the reply to every queued waiter. The screen only
+        // ever has one in flight at a time, but a stale reload could leave
+        // multiple — flushing them all keeps the UI from getting stuck.
+        const queued = pendingProjects.splice(0);
+        for (const fn of queued) fn(msg.list);
+        break;
+      }
+
+      case 'branches': {
+        const queued = pendingBranches.get(msg.projectRoot)?.splice(0) ?? [];
+        for (const fn of queued) fn(msg.list);
+        break;
+      }
+
+      case 'spawn_result': {
+        const fn = pendingSpawns.get(msg.requestId);
+        if (fn) {
+          pendingSpawns.delete(msg.requestId);
+          fn(msg);
+        }
+        break;
+      }
     }
   };
 
@@ -162,4 +197,79 @@ export function sendInput(agentId: string, data: string): void {
 
 export function sendKill(agentId: string): void {
   send({ type: 'kill', agentId });
+}
+
+const REQUEST_TIMEOUT_MS = 10_000;
+
+/** Ask the server for the current project list. Resolves to [] on timeout. */
+export function listProjects(): Promise<RemoteProject[]> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (list: RemoteProject[]) => {
+      if (!settled) {
+        settled = true;
+        resolve(list);
+      }
+    };
+    pendingProjects.push(finish);
+    send({ type: 'list_projects' });
+    setTimeout(() => finish([]), REQUEST_TIMEOUT_MS);
+  });
+}
+
+/** Ask the server for branches under `projectRoot`. Resolves to [] on timeout. */
+export function listBranches(projectRoot: string): Promise<RemoteBranch[]> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (list: RemoteBranch[]) => {
+      if (!settled) {
+        settled = true;
+        resolve(list);
+      }
+    };
+    let queue = pendingBranches.get(projectRoot);
+    if (!queue) {
+      queue = [];
+      pendingBranches.set(projectRoot, queue);
+    }
+    queue.push(finish);
+    send({ type: 'list_branches', projectRoot });
+    setTimeout(() => finish([]), REQUEST_TIMEOUT_MS);
+  });
+}
+
+export interface SpawnTaskRequest {
+  requestId: string;
+  projectRoot: string;
+  baseBranch: string | null;
+  agentId: string;
+  taskName: string;
+  prompt: string;
+}
+
+/** Submit a spawn_task request. Resolves with the server's spawn_result. */
+export function spawnTask(req: SpawnTaskRequest): Promise<SpawnResultMessage> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (msg: SpawnResultMessage) => {
+      if (!settled) {
+        settled = true;
+        resolve(msg);
+      }
+    };
+    pendingSpawns.set(req.requestId, finish);
+    send({ type: 'spawn_task', ...req });
+    setTimeout(() => {
+      if (!settled) {
+        pendingSpawns.delete(req.requestId);
+        finish({
+          type: 'spawn_result',
+          requestId: req.requestId,
+          ok: false,
+          error: 'spawn_failed',
+          message: 'timed_out',
+        });
+      }
+    }, REQUEST_TIMEOUT_MS);
+  });
 }
