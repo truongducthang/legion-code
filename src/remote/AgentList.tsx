@@ -4,6 +4,10 @@ import type { RemoteAgent } from '../../electron/remote/protocol';
 
 interface AgentListProps {
   onSelect: (agentId: string, taskName: string) => void;
+  onNewTask: () => void;
+  /** Optional one-shot notice (e.g. "task created but agent didn't start"). */
+  notice?: string;
+  onDismissNotice?: () => void;
 }
 
 export function AgentList(props: AgentListProps) {
@@ -17,6 +21,7 @@ export function AgentList(props: AgentListProps) {
         'flex-direction': 'column',
         height: '100%',
         background: '#0b0f14',
+        position: 'relative',
       }}
     >
       {/* Header */}
@@ -52,6 +57,40 @@ export function AgentList(props: AgentListProps) {
           </span>
         </div>
       </div>
+
+      <Show when={props.notice}>
+        <div
+          style={{
+            padding: '10px 16px',
+            background: '#1e3a8a',
+            color: '#bfdbfe',
+            'font-size': '14px',
+            display: 'flex',
+            'align-items': 'center',
+            'justify-content': 'space-between',
+            gap: '12px',
+          }}
+        >
+          <span>{props.notice}</span>
+          <Show when={props.onDismissNotice}>
+            <button
+              type="button"
+              onClick={() => props.onDismissNotice?.()}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#bfdbfe',
+                'font-size': '18px',
+                cursor: 'pointer',
+                padding: '0 4px',
+              }}
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
+          </Show>
+        </div>
+      </Show>
 
       {/* Connection status banner */}
       <Show when={status() !== 'connected'}>
@@ -203,6 +242,31 @@ export function AgentList(props: AgentListProps) {
           )}
         </For>
       </div>
+
+      <button
+        type="button"
+        onClick={() => props.onNewTask()}
+        aria-label="New task"
+        style={{
+          position: 'absolute',
+          right: '20px',
+          bottom: 'calc(20px + env(safe-area-inset-bottom))',
+          width: '56px',
+          height: '56px',
+          'border-radius': '50%',
+          background: '#2ec8ff',
+          color: '#06121d',
+          border: 'none',
+          'font-size': '28px',
+          'font-weight': '300',
+          'line-height': '1',
+          cursor: 'pointer',
+          'box-shadow': '0 6px 16px rgba(46, 200, 255, 0.35)',
+          'touch-action': 'manipulation',
+        }}
+      >
+        +
+      </button>
     </div>
   );
 }
