@@ -587,7 +587,8 @@ describe('snapshotRunningAgents', () => {
     expect(initial.lastDataAt).toBeLessThanOrEqual(after);
 
     // Emit data and verify the timestamp advances.
-    const proc = mockPtySpawn.mock.results.at(-1)?.value as ReturnType<typeof mockPtySpawn>;
+    const proc = mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1]
+      ?.value as ReturnType<typeof mockPtySpawn>;
     const sleepUntil = Date.now() + 5;
     while (Date.now() <= sleepUntil) {
       // busy-wait so we cross at least one ms tick deterministically
@@ -616,7 +617,8 @@ describe('snapshotRunningAgents', () => {
     spawnAgent(createMockWindow(), buildSpawnArgs({ agentId, dockerMode: false, isShell: false }));
     expect(snapshotRunningAgents().some((s) => s.agentId === agentId)).toBe(true);
 
-    const proc = mockPtySpawn.mock.results.at(-1)?.value as ReturnType<typeof mockPtySpawn>;
+    const proc = mockPtySpawn.mock.results[mockPtySpawn.mock.results.length - 1]
+      ?.value as ReturnType<typeof mockPtySpawn>;
     proc.emitExit({ exitCode: 0, signal: undefined });
 
     expect(snapshotRunningAgents().some((s) => s.agentId === agentId)).toBe(false);
