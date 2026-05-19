@@ -29,7 +29,10 @@ import {
 import { startStepsWatcher, stopStepsWatcher, readStepsForWorktree } from './steps.js';
 import { initPrChecks, startPrChecksWatcher, stopPrChecksWatcher, isPrUrl } from './pr-checks.js';
 import { readCoverageSummary } from './coverage.js';
-import { startRemoteServer } from '../remote/server.js';
+import { startRemoteServer, type SpawnTaskRequest } from '../remote/server.js';
+import type { RemoteProject, RemoteBranch, SpawnResultMessage } from '../remote/protocol.js';
+import { listBaseBranches } from './git-branches.js';
+import { runMobileSpawn } from './mobile-spawn.js';
 import {
   getGitIgnoredDirs,
   getMainBranch,
@@ -222,6 +225,11 @@ export function registerAllHandlers(win: BrowserWindow): void {
   // --- Remote access state ---
   let remoteServer: ReturnType<typeof startRemoteServer> | null = null;
   const taskNames = new Map<string, string>();
+  /** Last seen project list from persisted state, indexed by root path. */
+  const projectsByRoot = new Map<string, RemoteProject>();
+  /** Most recent branch list returned by listBaseBranches per project root.
+   *  Used to validate spawn_task baseBranch claims without a second git call. */
+  const lastBranchesByRoot = new Map<string, Set<string>>();
 
   // --- PTY commands ---
   ipcMain.handle(IPC.SpawnAgent, (_e, args) => {
@@ -528,10 +536,25 @@ export function registerAllHandlers(win: BrowserWindow): void {
   // show them (taskNames is only populated on CreateTask otherwise).
   function syncTaskNamesFromJson(json: string): void {
     try {
-      const state = JSON.parse(json) as { tasks?: Record<string, { id: string; name: string }> };
+      const state = JSON.parse(json) as {
+        tasks?: Record<string, { id: string; name: string }>;
+        projects?: Array<{ id: string; name: string; path: string; defaultBaseBranch?: string }>;
+      };
       if (state.tasks) {
         for (const t of Object.values(state.tasks)) {
           if (t.id && t.name) taskNames.set(t.id, t.name);
+        }
+      }
+      if (Array.isArray(state.projects)) {
+        projectsByRoot.clear();
+        for (const p of state.projects) {
+          if (typeof p?.path === 'string' && typeof p?.name === 'string') {
+            projectsByRoot.set(p.path, {
+              root: p.path,
+              name: p.name,
+              defaultBaseBranch: p.defaultBaseBranch ?? null,
+            });
+          }
         }
       }
     } catch (e) {
@@ -941,6 +964,15 @@ export function registerAllHandlers(win: BrowserWindow): void {
           lastLine: '',
         };
       },
+      listProjects: async () => Array.from(projectsByRoot.values()),
+      listBranches: async (projectRoot: string): Promise<RemoteBranch[]> => {
+        if (!projectsByRoot.has(projectRoot)) return [];
+        const list = await listBaseBranches(projectRoot);
+        lastBranchesByRoot.set(projectRoot, new Set(list.map((b) => b.name)));
+        return list;
+      },
+      spawnTask: async (req: SpawnTaskRequest): Promise<SpawnResultMessage> =>
+        runMobileSpawn(win, req, projectsByRoot, lastBranchesByRoot, taskNames),
     });
     return {
       url: remoteServer.url,
