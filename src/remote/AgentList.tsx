@@ -151,7 +151,7 @@ export function AgentList(props: AgentListProps) {
         >
           This is an experimental feature.{' '}
           <a
-            href="https://github.com/johannesjo/parallel-code/issues"
+            href="https://github.com/truongducthang/parallel-code/issues"
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: '#2ec8ff' }}
