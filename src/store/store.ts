@@ -151,6 +151,11 @@ export {
 export type { TaskAttentionState, TaskDotStatus } from './taskStatus';
 export { showNotification, clearNotification } from './notification';
 export { startPrChecksSubscription, getPrChecks, type PrChecksState } from './pr-checks';
+export {
+  startConflictPreflightSubscription,
+  getConflictPreflight,
+  type ConflictPreflightState,
+} from './conflict-preflight';
 export { getCompletedTasksTodayCount, getMergedLineTotals } from './completion';
 export {
   createTerminal,

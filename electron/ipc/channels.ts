@@ -143,6 +143,11 @@ export enum IPC {
   StopPrChecksWatcher = 'stop_pr_checks_watcher',
   PrChecksUpdate = 'pr_checks_update',
 
+  // Conflict pre-flight
+  StartConflictPreflight = 'start_conflict_preflight',
+  StopConflictPreflight = 'stop_conflict_preflight',
+  ConflictPreflightUpdate = 'conflict_preflight_update',
+
   // Logging
   LogFromRenderer = 'log_from_renderer',
 }

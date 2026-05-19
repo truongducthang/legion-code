@@ -407,7 +407,13 @@ export function TaskPanel(props: TaskPanelProps) {
           />
         </div>
         <div style={{ flex: '0 0 28px', overflow: 'hidden' }}>
-          <TaskBranchInfoBar task={props.task} onEditProject={(id) => setEditingProjectId(id)} />
+          <TaskBranchInfoBar
+            task={props.task}
+            onEditProject={(id) => setEditingProjectId(id)}
+            onOpenMerge={
+              props.task.gitIsolation === 'worktree' ? () => setShowMergeConfirm(true) : undefined
+            }
+          />
         </div>
       </div>
       <div style={{ flex: '1', 'min-height': '0' }}>

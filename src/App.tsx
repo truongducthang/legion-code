@@ -68,6 +68,7 @@ import { createCtrlWheelZoomHandler } from './lib/wheelZoom';
 import { ArenaOverlay } from './arena/ArenaOverlay';
 import { startDesktopNotificationWatcher } from './store/desktopNotifications';
 import { startPrChecksSubscription } from './store/pr-checks';
+import { startConflictPreflightSubscription } from './store/conflict-preflight';
 
 const MIN_WINDOW_DIMENSION = 100;
 
@@ -374,6 +375,7 @@ function App() {
     startTaskStatusPolling();
     const stopNotificationWatcher = startDesktopNotificationWatcher(windowFocused);
     const stopPrChecksSubscription = startPrChecksSubscription();
+    const stopConflictPreflightSubscription = startConflictPreflightSubscription();
 
     // Listen for plan content pushed from backend plan watcher
     const offPlanContent = window.electron.ipcRenderer.on(IPC.PlanContent, (data: unknown) => {
@@ -564,6 +566,7 @@ function App() {
       stopTaskStatusPolling();
       stopNotificationWatcher();
       stopPrChecksSubscription();
+      stopConflictPreflightSubscription();
       offPlanContent();
       offStepsContent();
       unlistenFocusChanged?.();

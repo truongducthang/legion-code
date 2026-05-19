@@ -128,6 +128,10 @@ const ALLOWED_CHANNELS = new Set([
   'start_pr_checks_watcher',
   'stop_pr_checks_watcher',
   'pr_checks_update',
+  // Conflict pre-flight
+  'start_conflict_preflight',
+  'stop_conflict_preflight',
+  'conflict_preflight_update',
   // Logging
   'log_from_renderer',
 ]);

@@ -28,6 +28,11 @@ import {
 } from './plans.js';
 import { startStepsWatcher, stopStepsWatcher, readStepsForWorktree } from './steps.js';
 import { initPrChecks, startPrChecksWatcher, stopPrChecksWatcher, isPrUrl } from './pr-checks.js';
+import {
+  initConflictPreflight,
+  startConflictPreflight,
+  stopConflictPreflight,
+} from './conflict-preflight.js';
 import { readCoverageSummary } from './coverage.js';
 import { startRemoteServer } from '../remote/server.js';
 import {
@@ -668,6 +673,23 @@ export function registerAllHandlers(win: BrowserWindow): void {
   ipcMain.handle(IPC.StopPrChecksWatcher, (_e, args) => {
     assertString(args.taskId, 'taskId');
     stopPrChecksWatcher(args.taskId);
+  });
+
+  // --- Conflict pre-flight watcher ---
+  initConflictPreflight(win);
+  ipcMain.handle(IPC.StartConflictPreflight, (_e, args) => {
+    assertString(args.taskId, 'taskId');
+    validatePath(args.worktreePath, 'worktreePath');
+    validatePath(args.projectRoot, 'projectRoot');
+    startConflictPreflight({
+      taskId: args.taskId,
+      worktreePath: args.worktreePath,
+      projectRoot: args.projectRoot,
+    });
+  });
+  ipcMain.handle(IPC.StopConflictPreflight, (_e, args) => {
+    assertString(args.taskId, 'taskId');
+    stopConflictPreflight(args.taskId);
   });
 
   // --- Steps content (one-shot read) ---
