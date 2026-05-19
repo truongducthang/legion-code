@@ -133,6 +133,27 @@ export interface StopPrChecksWatcherArgs {
   taskId: string;
 }
 
+export type ConflictPreflightStatus = 'clean' | 'stale' | 'conflict' | 'unknown';
+
+export interface ConflictPreflightUpdatePayload {
+  taskId: string;
+  status: ConflictPreflightStatus;
+  mainAheadCount: number;
+  conflictingFiles: string[];
+  baseBranch: string;
+  checkedAt: string;
+}
+
+export interface StartConflictPreflightArgs {
+  taskId: string;
+  worktreePath: string;
+  projectRoot: string;
+}
+
+export interface StopConflictPreflightArgs {
+  taskId: string;
+}
+
 export interface StepEntry {
   summary: string;
   detail?: string;
