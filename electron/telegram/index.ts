@@ -68,7 +68,7 @@ export async function startTelegramBot(): Promise<TelegramStatus> {
 
 export async function stopTelegramBot(): Promise<TelegramStatus> {
   await stopBot();
-  await stopTunnel();
+  await stopTunnel({ owner: 'telegram' });
   return getStatus();
 }
 
@@ -92,7 +92,7 @@ export async function getStatus(): Promise<TelegramStatus> {
 export async function setRemoteServerPort(port: number | null): Promise<void> {
   remoteServerPort = port;
   if (port === null) {
-    await stopTunnel();
+    await stopTunnel({ owner: 'telegram' });
     return;
   }
   await reconcileTunnel();
@@ -107,6 +107,7 @@ async function reconcileTunnel(): Promise<void> {
   if (shouldRun) {
     try {
       await startTunnel({
+        owner: 'telegram',
         remotePort: remoteServerPort as number,
         cloudflaredPath: cfg.cloudflaredPath,
       });
@@ -116,7 +117,7 @@ async function reconcileTunnel(): Promise<void> {
       });
     }
   } else {
-    await stopTunnel();
+    await stopTunnel({ owner: 'telegram' });
   }
 }
 
@@ -185,11 +186,11 @@ export async function applyConfigUpdate(update: {
     }
   } else if (!after.enabled && isBotRunning()) {
     await stopBot();
-    await stopTunnel();
+    await stopTunnel({ owner: 'telegram' });
   } else if (wasEnabled && after.enabled && update.token && update.token !== '') {
     // Token changed while running — restart.
     if (isBotRunning()) await stopBot();
-    await stopTunnel();
+    await stopTunnel({ owner: 'telegram' });
     try {
       await startTelegramBot();
     } catch (err) {
@@ -274,6 +275,12 @@ export async function probeTelegramTunnel(): Promise<{
   lastError?: string;
 }> {
   return probeCloudflared(getConfig().cloudflaredPath);
+}
+
+/** Read the user-configured cloudflared path (or null for PATH lookup).
+ *  Shared by the public-tunnel handler so users only configure once. */
+export function getCloudflaredPath(): string | null {
+  return getConfig().cloudflaredPath;
 }
 
 /* --- Mini App initData verification for the remote server --- */
