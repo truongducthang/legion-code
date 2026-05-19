@@ -504,7 +504,58 @@ describe('signal: PTY exit', () => {
   });
 });
 
+describe('forced refresh dedupe', () => {
+  it('drops a forced refresh when one is already in flight for the same task', async () => {
+    const handle = makeWin();
+    initConflictPreflight(handle.win as unknown as Parameters<typeof initConflictPreflight>[0]);
+    stubExec(shaResponder({ HEAD: 'h', main: 'b' }));
+    mockGetAgentMeta.mockReturnValue({ taskId: 't1', agentId: 'a1', isShell: false });
+    let release = (): void => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    mockCheckMergeStatus.mockImplementation(async () => {
+      await gate;
+      return { main_ahead_count: 0, conflicting_files: [], base_branch: 'main' };
+    });
+
+    startConflictPreflight({ taskId: 't1', worktreePath: '/r/wt', projectRoot: '/r' });
+    // The initial refresh is now in flight (gate not released).
+    await flush();
+    expect(mockCheckMergeStatus.mock.calls.length).toBe(1);
+    expect(__getStateForTests().entries[0].isRefreshing).toBe(true);
+
+    // Forced refresh requests while the in-flight one holds isRefreshing
+    // must be dropped, not queued.
+    for (const fn of ptyExitListeners) fn('a1');
+    for (const fn of ptyExitListeners) fn('a1');
+    await flush();
+    expect(mockCheckMergeStatus.mock.calls.length).toBe(1);
+
+    release();
+    await flush();
+    expect(__getStateForTests().entries[0].isRefreshing).toBe(false);
+  });
+});
+
 describe('window visibility gating', () => {
+  it('does not pause polling on blur (window still visible)', async () => {
+    const handle = makeWin();
+    initConflictPreflight(handle.win as unknown as Parameters<typeof initConflictPreflight>[0]);
+    stubExec(shaResponder({ HEAD: 'h', main: 'b' }));
+    mockCheckMergeStatus.mockResolvedValue({
+      main_ahead_count: 2,
+      conflicting_files: ['a.ts'],
+      base_branch: 'main',
+    });
+    startConflictPreflight({ taskId: 't1', worktreePath: '/r/wt', projectRoot: '/r' });
+    await flush();
+    // Blur is not subscribed by the module — emitting it should be a no-op
+    // and the interval must remain armed.
+    handle.emit('blur');
+    expect(__getStateForTests().intervalActive).toBe(true);
+  });
+
   it('clears the interval on hide and re-establishes + ticks on show', async () => {
     const handle = makeWin();
     initConflictPreflight(handle.win as unknown as Parameters<typeof initConflictPreflight>[0]);
@@ -529,6 +580,52 @@ describe('window visibility gating', () => {
     expect(__getStateForTests().intervalActive).toBe(true);
     // Immediate tick on show ran an additional refresh.
     expect(mockCheckMergeStatus.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('clears interval on minimize and resumes on restore', async () => {
+    const handle = makeWin();
+    initConflictPreflight(handle.win as unknown as Parameters<typeof initConflictPreflight>[0]);
+    stubExec(shaResponder({ HEAD: 'h', main: 'b' }));
+    mockCheckMergeStatus.mockResolvedValue({
+      main_ahead_count: 0,
+      conflicting_files: [],
+      base_branch: 'main',
+    });
+    startConflictPreflight({ taskId: 't1', worktreePath: '/r/wt', projectRoot: '/r' });
+    await flush();
+    handle.emit('minimize');
+    expect(__getStateForTests().intervalActive).toBe(false);
+    handle.emit('restore');
+    await flush();
+    expect(__getStateForTests().intervalActive).toBe(true);
+  });
+});
+
+describe('update payload shape', () => {
+  it('emits every spec-defined field on the push channel', async () => {
+    const handle = makeWin();
+    initConflictPreflight(handle.win as unknown as Parameters<typeof initConflictPreflight>[0]);
+    stubExec(shaResponder({ HEAD: 'h1', main: 'b1' }));
+    mockCheckMergeStatus.mockResolvedValueOnce({
+      main_ahead_count: 3,
+      conflicting_files: ['a.ts', 'b.ts'],
+      base_branch: 'main',
+    });
+
+    startConflictPreflight({ taskId: 't1', worktreePath: '/r/wt', projectRoot: '/r' });
+    await flush();
+
+    const u = latestUpdate(handle);
+    expect(u).toBeDefined();
+    expect(u?.taskId).toBe('t1');
+    expect(u?.status).toBe('conflict');
+    expect(u?.mainAheadCount).toBe(3);
+    expect(u?.conflictingFiles).toEqual(['a.ts', 'b.ts']);
+    expect(u?.baseBranch).toBe('main');
+    expect(typeof u?.checkedAt).toBe('string');
+    // checkedAt should be a valid ISO timestamp.
+    const checkedAt = u?.checkedAt ?? '';
+    expect(() => new Date(checkedAt).toISOString()).not.toThrow();
   });
 });
 
