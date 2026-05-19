@@ -26,3 +26,6 @@ docs/
 
 .ai-devkit.json
 fullstack-engineer.yaml
+CLAUDE.local.md
+pnpm-lock.yaml
+yarn.lock
