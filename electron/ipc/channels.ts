@@ -93,6 +93,9 @@ export enum IPC {
   StartRemoteServer = 'start_remote_server',
   StopRemoteServer = 'stop_remote_server',
   GetRemoteStatus = 'get_remote_status',
+  /** Push from main → renderer: a mobile client just spawned a task; the
+   *  renderer needs to mirror it into its store so the PC UI shows it. */
+  MobileTaskSpawned = 'mobile_task_spawned',
 
   // Telegram control
   StartTelegramBot = 'start_telegram_bot',

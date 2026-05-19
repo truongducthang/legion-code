@@ -145,8 +145,14 @@ export async function pickAndAddProject(): Promise<string | null> {
 
   const isGitRepo = await invoke<boolean>(IPC.CheckIsGitRepo, { path });
 
-  const segments = path.split('/');
-  const name = segments[segments.length - 1] || path;
+  // Cross-platform basename: dialog returns OS-native separators (`\` on
+  // Windows in dev, `/` elsewhere). Splitting on a single separator would
+  // leave Windows paths intact, so the project name ends up as the full
+  // absolute path. Strip trailing separators first, then take everything
+  // after the final `/` or `\`.
+  const cleaned = path.replace(/[\\/]+$/, '');
+  const lastSep = Math.max(cleaned.lastIndexOf('\\'), cleaned.lastIndexOf('/'));
+  const name = (lastSep >= 0 ? cleaned.slice(lastSep + 1) : cleaned) || path;
   return addProject(name, path, isGitRepo);
 }
 

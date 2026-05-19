@@ -70,6 +70,7 @@ import { startDesktopNotificationWatcher } from './store/desktopNotifications';
 import { startPrChecksSubscription } from './store/pr-checks';
 import { startConflictPreflightSubscription } from './store/conflict-preflight';
 import { startHungAgentSubscription } from './store/hung-agent';
+import { startMobileTaskSyncSubscription } from './store/mobileTaskSync';
 
 const MIN_WINDOW_DIMENSION = 100;
 
@@ -378,6 +379,7 @@ function App() {
     const stopPrChecksSubscription = startPrChecksSubscription();
     const stopConflictPreflightSubscription = startConflictPreflightSubscription();
     const stopHungAgentSubscription = startHungAgentSubscription();
+    const stopMobileTaskSync = startMobileTaskSyncSubscription();
 
     // Listen for plan content pushed from backend plan watcher
     const offPlanContent = window.electron.ipcRenderer.on(IPC.PlanContent, (data: unknown) => {
@@ -570,6 +572,7 @@ function App() {
       stopPrChecksSubscription();
       stopConflictPreflightSubscription();
       stopHungAgentSubscription();
+      stopMobileTaskSync();
       offPlanContent();
       offStepsContent();
       unlistenFocusChanged?.();

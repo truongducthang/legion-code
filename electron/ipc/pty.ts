@@ -37,6 +37,39 @@ interface PtySession {
    *  any output arrives). Used by the hung-agent detector to classify
    *  prolonged silence. In-memory only. */
   lastDataAt: number;
+  /** Set the moment kill is initiated; second killAgent / killAllAgents
+   *  call skips the native kill so node-pty's ConPTY backend never has to
+   *  process a double-terminate (which heap-corrupts on Windows). */
+  killing?: boolean;
+}
+
+/** Terminate a PTY's underlying process.
+ *
+ *  On Windows we sidestep node-pty's ConPTY kill path. It heap-corrupts the
+ *  Electron parent (exit code 3221226356 / 0xC0000374) when the console
+ *  handles are in transitional states — repro on every closeTask in dev.
+ *  taskkill ends the shell + its children at the OS level; node-pty's
+ *  onExit then fires from the natural process exit and runs its own cleanup
+ *  without us having to call proc.kill(). */
+function killPtyProcess(proc: pty.IPty): void {
+  if (process.platform === 'win32') {
+    try {
+      // Fire-and-forget: we don't await the kill, just let the OS handle it.
+      // /F = force, /T = kill the whole tree (shell + spawned children).
+      execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], () => {
+        /* exit code ignored — process may already be gone */
+      });
+      return;
+    } catch {
+      // Fall through to node-pty's kill as a last resort. This is unlikely
+      // (taskkill ships with Windows) but better than leaking the process.
+    }
+  }
+  try {
+    proc.kill();
+  } catch {
+    /* node-pty may throw if process is already gone */
+  }
 }
 
 const sessions = new Map<string, PtySession>();
@@ -504,23 +537,23 @@ export function resumeAgent(agentId: string): void {
 
 export function killAgent(agentId: string): void {
   const session = sessions.get(agentId);
-  if (session) {
-    if (session.flushTimer) {
-      clearTimeout(session.flushTimer);
-      session.flushTimer = null;
-    }
-    // Clear subscribers before kill so the onExit flush doesn't
-    // notify stale listeners. Let onExit handle sessions.delete
-    // and emitPtyEvent to avoid the race condition.
-    session.subscribers.clear();
-    // Stop the Docker container first so it doesn't keep running after the
-    // local PTY process (docker run) is killed. Fire-and-forget; the PTY kill
-    // below is the authoritative termination signal.
-    if (session.containerName) {
-      stopDockerContainer(session.containerName);
-    }
-    session.proc.kill();
+  if (!session || session.killing) return;
+  session.killing = true;
+  if (session.flushTimer) {
+    clearTimeout(session.flushTimer);
+    session.flushTimer = null;
   }
+  // Clear subscribers before kill so the onExit flush doesn't
+  // notify stale listeners. Let onExit handle sessions.delete
+  // and emitPtyEvent to avoid the race condition.
+  session.subscribers.clear();
+  // Stop the Docker container first so it doesn't keep running after the
+  // local PTY process (docker run) is killed. Fire-and-forget; the PTY kill
+  // below is the authoritative termination signal.
+  if (session.containerName) {
+    stopDockerContainer(session.containerName);
+  }
+  killPtyProcess(session.proc);
 }
 
 export function countRunningAgents(): number {
@@ -529,6 +562,8 @@ export function countRunningAgents(): number {
 
 export function killAllAgents(): void {
   for (const [, session] of sessions) {
+    if (session.killing) continue;
+    session.killing = true;
     if (session.flushTimer) clearTimeout(session.flushTimer);
     session.subscribers.clear();
     if (session.containerName) {
@@ -541,7 +576,7 @@ export function killAllAgents(): void {
         // Intentionally ignore: container may not exist or may have already stopped.
       }
     }
-    session.proc.kill();
+    killPtyProcess(session.proc);
   }
   // Let onExit handlers clean up sessions individually
 }

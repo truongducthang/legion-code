@@ -169,6 +169,29 @@ export interface HungAgentSettings {
   hungThresholdMs: number;
 }
 
+/** Payload pushed from main → renderer when a mobile client spawns a task.
+ *  The PTY is already running in the main process; the renderer mirrors it
+ *  into its store and re-attaches when the TerminalView mounts. */
+export interface MobileTaskSpawnedPayload {
+  taskId: string;
+  agentId: string;
+  /** Project root path — the renderer matches this to a project in its store
+   *  to derive projectId. If no match (shouldn't happen — the server validates
+   *  against the same project list), the payload is dropped. */
+  projectRoot: string;
+  /** Agent preset id (e.g. "claude-code"). The renderer looks up the full
+   *  AgentDef from store.availableAgents. */
+  agentDefId: string;
+  taskName: string;
+  baseBranch: string | null;
+  branchName: string;
+  worktreePath: string;
+  /** Original prompt text — stored as savedInitialPrompt for display.
+   *  Already sent to the PTY by the main process, so the renderer must NOT
+   *  re-send it. */
+  prompt: string;
+}
+
 export interface StepEntry {
   summary: string;
   detail?: string;

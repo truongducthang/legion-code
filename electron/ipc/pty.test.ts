@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockExecFileSync, mockExecFile, mockChildProcessSpawn, mockPtySpawn, mockLogDebug } =
   vi.hoisted(() => {
     const mockExecFileSync = vi.fn((command: string, args?: string[]) => {
-      if (command === 'which' && args?.[0] === 'nonexistent-binary-xyz') {
+      if ((command === 'which' || command === 'where') && args?.[0] === 'nonexistent-binary-xyz') {
         throw new Error('not found');
       }
       return '';

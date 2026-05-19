@@ -1,9 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { BrowserWindow } from 'electron';
 
-// Stub Electron's BrowserWindow surface used by runMobileSpawn (it's only
-// forwarded to spawnAgent, which we mock).
-const fakeWin = {} as BrowserWindow;
+// Stub Electron's BrowserWindow surface used by runMobileSpawn. spawnAgent
+// is mocked, but the success path also calls win.webContents.send to notify
+// the renderer about the new task — we capture that via sendMock.
+const sendMock = vi.fn();
+const fakeWin = {
+  isDestroyed: () => false,
+  webContents: { send: sendMock },
+} as unknown as BrowserWindow;
 
 const createTaskMock = vi.fn();
 const spawnAgentMock = vi.fn();
@@ -51,6 +56,7 @@ beforeEach(() => {
   spawnAgentMock.mockReset();
   writeToAgentMock.mockReset();
   listAgentsMock.mockReset();
+  sendMock.mockReset();
   listAgentsMock.mockResolvedValue([
     { id: 'claude-code', name: 'Claude Code', command: 'claude', args: [] },
   ]);
@@ -266,6 +272,71 @@ describe('runMobileSpawn happy path + failure modes', () => {
     expect(spawnArgs.cwd).toBe('/Users/me/.worktrees/x');
     expect(spawnArgs.command).toBe('claude');
     expect(spawnArgs.isShell).toBe(false);
+  });
+
+  it('notifies the renderer with mobile_task_spawned on the happy path', async () => {
+    // Regression: without this push the desktop store never learns about
+    // mobile-created tasks, so the PC UI stays empty until the user
+    // restarts and the worktree is re-imported by hand.
+    createTaskMock.mockResolvedValueOnce({
+      id: 'task-9',
+      branch_name: 'task/from-mobile',
+      worktree_path: '/wt/from-mobile',
+    });
+    spawnAgentMock.mockImplementationOnce(() => undefined);
+    const maps = makeMaps({
+      projects: [{ root: '/Users/me/repo', name: 'r', defaultBaseBranch: 'main' }],
+      branches: { '/Users/me/repo': ['main'] },
+    });
+    const result = await runMobileSpawn(
+      fakeWin,
+      { ...baseReq, baseBranch: 'main' },
+      maps.projectsByRoot,
+      maps.lastBranchesByRoot,
+      maps.taskNames,
+    );
+    expect(result.ok).toBe(true);
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const [channel, payload] = sendMock.mock.calls[0] as [string, Record<string, unknown>];
+    expect(channel).toBe('mobile_task_spawned');
+    expect(payload.taskId).toBe('task-9');
+    expect(payload.agentDefId).toBe('claude-code');
+    expect(payload.projectRoot).toBe('/Users/me/repo');
+    expect(payload.baseBranch).toBe('main');
+    expect(payload.branchName).toBe('task/from-mobile');
+    expect(payload.worktreePath).toBe('/wt/from-mobile');
+    expect(payload.taskName).toBe('Fix bug');
+    expect(payload.prompt).toBe('Fix the auth bug');
+    expect(typeof payload.agentId).toBe('string');
+    expect((payload.agentId as string).length).toBeGreaterThan(0);
+  });
+
+  it('does not notify the renderer when spawn fails after task creation', async () => {
+    // Spec keeps the worktree on disk so the user can retry from desktop,
+    // but the renderer push would mis-claim "agent is running" — skip it.
+    createTaskMock.mockResolvedValueOnce({
+      id: 'task-10',
+      branch_name: 'task/bad-spawn',
+      worktree_path: '/wt/bad',
+    });
+    spawnAgentMock.mockImplementationOnce(() => {
+      throw new Error('binary not found');
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const maps = makeMaps({
+      projects: [{ root: '/Users/me/repo', name: 'r', defaultBaseBranch: null }],
+    });
+    const result = await runMobileSpawn(
+      fakeWin,
+      baseReq,
+      maps.projectsByRoot,
+      maps.lastBranchesByRoot,
+      maps.taskNames,
+    );
+    warnSpy.mockRestore();
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.agentId).toBe('');
+    expect(sendMock).not.toHaveBeenCalled();
   });
 
   it('passes baseBranch as undefined when null', async () => {

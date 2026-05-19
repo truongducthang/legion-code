@@ -7,6 +7,7 @@ import { spawnAgent, writeToAgent } from './pty.js';
 import { createTask } from './tasks.js';
 import { listAgents } from './agents.js';
 import { validateBranchName } from '../mcp/validation.js';
+import { IPC } from './channels.js';
 
 /** Mirrors src/store/tasks.ts:AGENT_WRITE_READY_TIMEOUT_MS so a mobile-spawned
  *  prompt waits the same amount of time for the PTY to come up as a
@@ -150,6 +151,7 @@ export async function runMobileSpawn(
   // --- Create worktree (same path desktop uses) ---
   let taskId: string;
   let worktreePath: string;
+  let branchName: string;
   try {
     const result = await createTask(
       trimmedName,
@@ -160,6 +162,7 @@ export async function runMobileSpawn(
     );
     taskId = result.id;
     worktreePath = result.worktree_path;
+    branchName = result.branch_name;
     taskNames.set(taskId, trimmedName);
   } catch (err) {
     return {
@@ -205,6 +208,33 @@ export async function runMobileSpawn(
   void sendInitialPrompt(newAgentId, req.prompt, agentDef.prompt_ready_delay_ms).catch((err) => {
     console.warn('[mobile-spawn] initial prompt send failed:', err);
   });
+
+  // Tell the desktop renderer about the new task so its store mirrors what
+  // the mobile client (and the now-running PTY) sees. Without this the PC
+  // UI stays empty even though the worktree and agent exist on disk/in
+  // memory. The renderer is responsible for re-attaching to the PTY when
+  // its TerminalView mounts (agent.attachExisting: true).
+  //
+  // Wrapped: a renderer-notify failure must not poison the spawn_result the
+  // mobile client is waiting on — the PTY is already running and the WS
+  // broadcast (onPtyEvent('spawn')) has already gone out.
+  try {
+    if (typeof win.isDestroyed === 'function' && !win.isDestroyed() && win.webContents) {
+      win.webContents.send(IPC.MobileTaskSpawned, {
+        taskId,
+        agentId: newAgentId,
+        projectRoot: req.projectRoot,
+        agentDefId: req.agentId,
+        taskName: trimmedName,
+        baseBranch: req.baseBranch,
+        branchName,
+        worktreePath,
+        prompt: req.prompt,
+      });
+    }
+  } catch (err) {
+    console.warn('[mobile-spawn] notify renderer failed:', err);
+  }
 
   return {
     type: 'spawn_result',

@@ -96,6 +96,7 @@ const ALLOWED_CHANNELS = new Set([
   'set_telegram_config',
   'set_focused_agent',
   'probe_cloudflared',
+  'mobile_task_spawned',
   // Plan
   'plan_content',
   'read_plan_content',
