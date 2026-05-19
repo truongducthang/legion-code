@@ -3,12 +3,23 @@
 import { Show, createSignal, createEffect, onCleanup, createMemo, untrack } from 'solid-js';
 import { Dialog } from './Dialog';
 import { store } from '../store/core';
-import { startRemoteAccess, stopRemoteAccess, refreshRemoteStatus } from '../store/remote';
+import {
+  startRemoteAccess,
+  stopRemoteAccess,
+  refreshRemoteStatus,
+  startPublicTunnel,
+  stopPublicTunnel,
+} from '../store/remote';
+import { invoke } from '../lib/ipc';
+import { IPC } from '../../electron/ipc/channels';
 import { theme } from '../lib/theme';
 import type { RemoteAccess } from '../store/types';
 
-type NetworkMode = 'wifi' | 'tailscale';
-type RemoteAccessUrls = Pick<RemoteAccess, 'enabled' | 'url' | 'wifiUrl' | 'tailscaleUrl'>;
+type NetworkMode = 'wifi' | 'tailscale' | 'public';
+type RemoteAccessUrls = Pick<
+  RemoteAccess,
+  'enabled' | 'url' | 'wifiUrl' | 'tailscaleUrl' | 'publicUrl'
+>;
 
 interface ConnectPhoneModalProps {
   open: boolean;
@@ -20,14 +31,19 @@ export function connectionUrlForMode(
   networkMode: NetworkMode,
 ): string | null {
   if (!remoteAccess.enabled) return null;
+  if (networkMode === 'public') return remoteAccess.publicUrl;
   const modeUrl = networkMode === 'tailscale' ? remoteAccess.tailscaleUrl : remoteAccess.wifiUrl;
   return modeUrl ?? remoteAccess.url;
 }
 
+/** Pick a default mode when the current one is no longer reachable. Never
+ *  auto-promotes to `'public'` — exposing the desktop on the Internet must
+ *  be a deliberate user action. */
 export function availableNetworkModeFor(
   remoteAccess: RemoteAccessUrls,
   currentMode: NetworkMode,
 ): NetworkMode {
+  if (currentMode === 'public') return 'public';
   if (currentMode === 'wifi' && remoteAccess.wifiUrl) return 'wifi';
   if (currentMode === 'tailscale' && remoteAccess.tailscaleUrl) return 'tailscale';
   if (remoteAccess.wifiUrl) return 'wifi';
@@ -42,6 +58,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
   const [error, setError] = createSignal<string | null>(null);
   const [copied, setCopied] = createSignal(false);
   const [mode, setMode] = createSignal<NetworkMode>('wifi');
+  const [cloudflaredAvailable, setCloudflaredAvailable] = createSignal<boolean | null>(null);
   let stopPolling: (() => void) | undefined;
   let copiedTimer: ReturnType<typeof setTimeout> | undefined;
   let qrRequestId = 0;
@@ -97,6 +114,15 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
     });
   });
 
+  // Probe cloudflared once per modal open to gate the Public tab.
+  createEffect(() => {
+    if (!props.open) return;
+    setCloudflaredAvailable(null);
+    invoke<{ available: boolean }>(IPC.ProbeCloudflared)
+      .then((r) => setCloudflaredAvailable(r.available))
+      .catch(() => setCloudflaredAvailable(false));
+  });
+
   // Start server when modal opens
   createEffect(() => {
     if (!props.open) return;
@@ -114,6 +140,7 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
                 url: result.url,
                 wifiUrl: result.wifiUrl,
                 tailscaleUrl: result.tailscaleUrl,
+                publicUrl: null,
               },
               untrack(mode),
             ),
@@ -170,6 +197,14 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
     color: active ? theme.accentText : theme.fgMuted,
     'font-weight': active ? '600' : '400',
   });
+
+  const cloudflaredMissing = () => cloudflaredAvailable() === false;
+  function recheckCloudflared(): void {
+    setCloudflaredAvailable(null);
+    invoke<{ available: boolean }>(IPC.ProbeCloudflared)
+      .then((r) => setCloudflaredAvailable(r.available))
+      .catch(() => setCloudflaredAvailable(false));
+  }
 
   return (
     <Dialog
@@ -250,91 +285,120 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
               <span style={{ 'font-size': '10px', color: theme.fgSubtle }}>Not detected</span>
             </Show>
           </div>
+          <div
+            style={{
+              display: 'flex',
+              'flex-direction': 'column',
+              'align-items': 'center',
+              gap: '2px',
+            }}
+          >
+            <button onClick={() => setMode('public')} style={pillStyle(mode() === 'public')}>
+              Public
+            </button>
+            <Show when={cloudflaredMissing()}>
+              <span style={{ 'font-size': '10px', color: theme.fgSubtle }}>Needs cloudflared</span>
+            </Show>
+          </div>
         </div>
 
-        {/* QR Code */}
-        <div
-          style={{
-            width: '200px',
-            height: '200px',
-            'border-radius': '8px',
-            background: '#ffffff',
-            display: 'flex',
-            'align-items': 'center',
-            'justify-content': 'center',
-            overflow: 'hidden',
-          }}
-        >
-          <Show
-            when={qrDataUrl()}
-            fallback={
-              <span
-                aria-live="polite"
+        <Show
+          when={mode() === 'public'}
+          fallback={
+            <>
+              {/* QR Code (LAN/Tailscale modes) */}
+              <div
                 style={{
-                  color: '#3f3f46',
-                  'font-size': '12px',
-                  'text-align': 'center',
-                  padding: '16px',
+                  width: '200px',
+                  height: '200px',
+                  'border-radius': '8px',
+                  background: '#ffffff',
+                  display: 'flex',
+                  'align-items': 'center',
+                  'justify-content': 'center',
+                  overflow: 'hidden',
                 }}
               >
-                {qrError() ?? 'Generating QR code...'}
-              </span>
-            }
-          >
-            {(url) => (
-              <img
-                src={url()}
-                alt="Connection QR code"
-                style={{ width: '200px', height: '200px' }}
-              />
-            )}
-          </Show>
-        </div>
+                <Show
+                  when={qrDataUrl()}
+                  fallback={
+                    <span
+                      aria-live="polite"
+                      style={{
+                        color: '#3f3f46',
+                        'font-size': '12px',
+                        'text-align': 'center',
+                        padding: '16px',
+                      }}
+                    >
+                      {qrError() ?? 'Generating QR code...'}
+                    </span>
+                  }
+                >
+                  {(url) => (
+                    <img
+                      src={url()}
+                      alt="Connection QR code"
+                      style={{ width: '200px', height: '200px' }}
+                    />
+                  )}
+                </Show>
+              </div>
 
-        {/* URL */}
-        <div
-          style={{
-            width: '100%',
-            background: theme.bgInput,
-            border: `1px solid ${theme.border}`,
-            'border-radius': '8px',
-            padding: '10px 12px',
-            'font-size': '13px',
-            'font-family': "'JetBrains Mono', monospace",
-            color: theme.fg,
-            'word-break': 'break-all',
-            'text-align': 'center',
-            cursor: 'pointer',
-          }}
-          onClick={handleCopyUrl}
-          title="Click to copy"
+              {/* URL */}
+              <div
+                style={{
+                  width: '100%',
+                  background: theme.bgInput,
+                  border: `1px solid ${theme.border}`,
+                  'border-radius': '8px',
+                  padding: '10px 12px',
+                  'font-size': '13px',
+                  'font-family': "'JetBrains Mono', monospace",
+                  color: theme.fg,
+                  'word-break': 'break-all',
+                  'text-align': 'center',
+                  cursor: 'pointer',
+                }}
+                onClick={handleCopyUrl}
+                title="Click to copy"
+              >
+                {activeUrl()}
+              </div>
+
+              <Show when={copied()}>
+                <span style={{ 'font-size': '13px', color: theme.success }}>Copied!</span>
+              </Show>
+
+              <p
+                style={{
+                  'font-size': '13px',
+                  color: theme.fgMuted,
+                  'text-align': 'center',
+                  margin: '0',
+                  'line-height': '1.5',
+                }}
+              >
+                Scan the QR code or copy the URL to monitor and interact with your agent terminals
+                from your phone.
+                <Show
+                  when={mode() === 'tailscale'}
+                  fallback={<> Your phone and this computer must be on the same WiFi network.</>}
+                >
+                  <> Your phone and this computer must be on the same Tailscale network.</>
+                </Show>
+              </p>
+            </>
+          }
         >
-          {activeUrl()}
-        </div>
-
-        <Show when={copied()}>
-          <span style={{ 'font-size': '13px', color: theme.success }}>Copied!</span>
+          <PublicTunnelPanel
+            onCopyUrl={handleCopyUrl}
+            qrDataUrl={qrDataUrl}
+            qrError={qrError}
+            cloudflaredMissing={cloudflaredMissing}
+            onRecheck={recheckCloudflared}
+          />
         </Show>
-
-        {/* Instructions */}
-        <p
-          style={{
-            'font-size': '13px',
-            color: theme.fgMuted,
-            'text-align': 'center',
-            margin: '0',
-            'line-height': '1.5',
-          }}
-        >
-          Scan the QR code or copy the URL to monitor and interact with your agent terminals from
-          your phone.
-          <Show
-            when={mode() === 'tailscale'}
-            fallback={<> Your phone and this computer must be on the same WiFi network.</>}
-          >
-            <> Your phone and this computer must be on the same Tailscale network.</>
-          </Show>
-        </p>
 
         {/* Connected clients */}
         <Show
@@ -405,5 +469,275 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
         </button>
       </Show>
     </Dialog>
+  );
+}
+
+interface PublicTunnelPanelProps {
+  onCopyUrl: () => void;
+  qrDataUrl: () => string | null;
+  qrError: () => string | null;
+  cloudflaredMissing: () => boolean;
+  onRecheck: () => void;
+}
+
+function PublicTunnelPanel(props: PublicTunnelPanelProps) {
+  const state = () => store.remoteAccess.publicTunnelState;
+  const url = () => store.remoteAccess.publicUrl;
+  const err = () => store.remoteAccess.publicTunnelError;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        'flex-direction': 'column',
+        'align-items': 'center',
+        gap: '14px',
+        width: '100%',
+      }}
+    >
+      <Show
+        when={!props.cloudflaredMissing()}
+        fallback={<InstallCloudflaredHint onRecheck={props.onRecheck} />}
+      >
+        <Show
+          when={state() === 'active' && url()}
+          fallback={
+            <div
+              style={{
+                width: '200px',
+                height: '200px',
+                'border-radius': '8px',
+                background: theme.bgInput,
+                border: `1px dashed ${theme.border}`,
+                display: 'flex',
+                'flex-direction': 'column',
+                'align-items': 'center',
+                'justify-content': 'center',
+                gap: '10px',
+                padding: '16px',
+                'text-align': 'center',
+              }}
+            >
+              <Show when={state() === 'idle'}>
+                <span style={{ color: theme.fgMuted, 'font-size': '13px' }}>No public URL yet</span>
+                <button
+                  onClick={() => {
+                    void startPublicTunnel();
+                  }}
+                  style={{
+                    padding: '8px 14px',
+                    background: theme.accent,
+                    color: theme.accentText,
+                    border: 'none',
+                    'border-radius': '6px',
+                    'font-size': '13px',
+                    'font-weight': '600',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Start public tunnel
+                </button>
+              </Show>
+              <Show when={state() === 'starting'}>
+                <span style={{ color: theme.fgMuted, 'font-size': '13px' }}>Starting tunnel…</span>
+              </Show>
+              <Show when={state() === 'error'}>
+                <span style={{ color: theme.error, 'font-size': '12px' }}>
+                  {err() ?? 'Tunnel failed'}
+                </span>
+                <button
+                  onClick={() => {
+                    void startPublicTunnel();
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    background: 'transparent',
+                    color: theme.fg,
+                    border: `1px solid ${theme.border}`,
+                    'border-radius': '6px',
+                    'font-size': '12px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Retry
+                </button>
+              </Show>
+            </div>
+          }
+        >
+          <div
+            style={{
+              width: '200px',
+              height: '200px',
+              'border-radius': '8px',
+              background: '#ffffff',
+              display: 'flex',
+              'align-items': 'center',
+              'justify-content': 'center',
+              overflow: 'hidden',
+            }}
+          >
+            <Show
+              when={props.qrDataUrl()}
+              fallback={
+                <span
+                  aria-live="polite"
+                  style={{
+                    color: '#3f3f46',
+                    'font-size': '12px',
+                    'text-align': 'center',
+                    padding: '16px',
+                  }}
+                >
+                  {props.qrError() ?? 'Generating QR code...'}
+                </span>
+              }
+            >
+              {(qr) => (
+                <img
+                  src={qr()}
+                  alt="Public connection QR code"
+                  style={{ width: '200px', height: '200px' }}
+                />
+              )}
+            </Show>
+          </div>
+
+          <div
+            style={{
+              width: '100%',
+              background: theme.bgInput,
+              border: `1px solid ${theme.border}`,
+              'border-radius': '8px',
+              padding: '10px 12px',
+              'font-size': '13px',
+              'font-family': "'JetBrains Mono', monospace",
+              color: theme.fg,
+              'word-break': 'break-all',
+              'text-align': 'center',
+              cursor: 'pointer',
+            }}
+            onClick={() => props.onCopyUrl()}
+            title="Click to copy"
+          >
+            {url()}
+          </div>
+
+          <p
+            style={{
+              'font-size': '12px',
+              color: theme.fgMuted,
+              'text-align': 'center',
+              margin: '0',
+              'line-height': '1.5',
+            }}
+          >
+            Anyone with this URL and token can connect over the public Internet. Stop the tunnel
+            when you are done.
+          </p>
+
+          <button
+            onClick={() => {
+              void stopPublicTunnel();
+            }}
+            style={{
+              padding: '6px 14px',
+              background: 'transparent',
+              color: theme.fg,
+              border: `1px solid ${theme.border}`,
+              'border-radius': '6px',
+              'font-size': '12px',
+              cursor: 'pointer',
+            }}
+          >
+            Stop tunnel
+          </button>
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
+function InstallCloudflaredHint(props: { onRecheck: () => void }) {
+  const platform = navigator.platform.toLowerCase();
+  const isMac = platform.includes('mac');
+  const isWin = platform.includes('win');
+
+  return (
+    <div
+      style={{
+        width: '100%',
+        background: theme.bgInput,
+        border: `1px solid ${theme.border}`,
+        'border-radius': '8px',
+        padding: '14px',
+        display: 'flex',
+        'flex-direction': 'column',
+        gap: '10px',
+      }}
+    >
+      <div style={{ 'font-size': '13px', color: theme.fg, 'font-weight': '600' }}>
+        cloudflared is not installed
+      </div>
+      <div style={{ 'font-size': '12px', color: theme.fgMuted, 'line-height': '1.5' }}>
+        Install it once on this computer, then come back and tap Recheck. iPhone needs nothing — it
+        just opens Safari.
+      </div>
+      <Show when={isMac}>
+        <CodeLine cmd="brew install cloudflared" />
+      </Show>
+      <Show when={isWin}>
+        <CodeLine cmd="winget install --id Cloudflare.cloudflared" />
+      </Show>
+      <Show when={!isMac && !isWin}>
+        <div style={{ 'font-size': '12px', color: theme.fgMuted }}>Download from:</div>
+        <CodeLine cmd="https://github.com/cloudflare/cloudflared/releases/latest" />
+      </Show>
+      <button
+        onClick={() => props.onRecheck()}
+        style={{
+          'align-self': 'flex-start',
+          padding: '6px 12px',
+          background: theme.accent,
+          color: theme.accentText,
+          border: 'none',
+          'border-radius': '6px',
+          'font-size': '12px',
+          'font-weight': '600',
+          cursor: 'pointer',
+        }}
+      >
+        Recheck
+      </button>
+    </div>
+  );
+}
+
+function CodeLine(props: { cmd: string }) {
+  async function copy(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(props.cmd);
+    } catch {
+      /* clipboard unavailable */
+    }
+  }
+  return (
+    <div
+      onClick={() => void copy()}
+      title="Click to copy"
+      style={{
+        background: theme.bg,
+        border: `1px solid ${theme.border}`,
+        'border-radius': '6px',
+        padding: '8px 10px',
+        'font-size': '12px',
+        'font-family': "'JetBrains Mono', monospace",
+        color: theme.fg,
+        'word-break': 'break-all',
+        cursor: 'pointer',
+      }}
+    >
+      {props.cmd}
+    </div>
   );
 }

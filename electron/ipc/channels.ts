@@ -97,6 +97,13 @@ export enum IPC {
    *  renderer needs to mirror it into its store so the PC UI shows it. */
   MobileTaskSpawned = 'mobile_task_spawned',
 
+  // Public tunnel (cloudflared, shared with Telegram)
+  StartPublicTunnel = 'start_public_tunnel',
+  StopPublicTunnel = 'stop_public_tunnel',
+  GetPublicTunnelStatus = 'get_public_tunnel_status',
+  /** Push from main → renderer when tunnel URL or error state changes. */
+  PublicTunnelStatusChanged = 'public_tunnel_status_changed',
+
   // Telegram control
   StartTelegramBot = 'start_telegram_bot',
   StopTelegramBot = 'stop_telegram_bot',

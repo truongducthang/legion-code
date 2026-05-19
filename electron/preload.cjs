@@ -89,6 +89,11 @@ const ALLOWED_CHANNELS = new Set([
   'start_remote_server',
   'stop_remote_server',
   'get_remote_status',
+  // Public tunnel
+  'start_public_tunnel',
+  'stop_public_tunnel',
+  'get_public_tunnel_status',
+  'public_tunnel_status_changed',
   // Telegram control
   'start_telegram_bot',
   'stop_telegram_bot',

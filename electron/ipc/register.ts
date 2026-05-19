@@ -54,8 +54,15 @@ import {
   verifyTelegramInitData,
   setRemoteServerPort as setTelegramRemoteServerPort,
   probeTelegramTunnel,
+  getCloudflaredPath,
   type TelegramConfig,
 } from '../telegram/index.js';
+import {
+  startTunnel as startPublicTunnelImpl,
+  stopTunnel as stopPublicTunnelImpl,
+  getTunnelStatus as getPublicTunnelStatus,
+  onTunnelStatusChange as onPublicTunnelStatusChange,
+} from '../telegram/tunnel.js';
 import {
   getGitIgnoredDirs,
   getMainBranch,
@@ -1043,6 +1050,11 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   ipcMain.handle(IPC.StopRemoteServer, async () => {
     if (remoteServer) {
+      // Release this consumer's hold on the shared tunnel before tearing the
+      // server down — otherwise the public URL keeps pointing at a closed
+      // port. The Telegram bot's hold is unaffected; if it still wants the
+      // tunnel, it keeps it.
+      await stopPublicTunnelImpl({ owner: 'public' });
       await remoteServer.stop();
       remoteServer = null;
       await setTelegramRemoteServerPort(null);
@@ -1100,6 +1112,32 @@ export function registerAllHandlers(win: BrowserWindow): void {
 
   ipcMain.handle(IPC.ProbeCloudflared, async () => {
     return await probeTelegramTunnel();
+  });
+
+  // --- Public tunnel (cloudflared, shared singleton) ---
+  ipcMain.handle(IPC.StartPublicTunnel, async () => {
+    if (!remoteServer) {
+      throw new Error('Remote server is not running. Start it before opening a public tunnel.');
+    }
+    return await startPublicTunnelImpl({
+      owner: 'public',
+      remotePort: remoteServer.port,
+      cloudflaredPath: getCloudflaredPath(),
+    });
+  });
+
+  ipcMain.handle(IPC.StopPublicTunnel, async () => {
+    await stopPublicTunnelImpl({ owner: 'public' });
+    return getPublicTunnelStatus();
+  });
+
+  ipcMain.handle(IPC.GetPublicTunnelStatus, () => {
+    return getPublicTunnelStatus();
+  });
+
+  // Forward every tunnel transition to the renderer so the UI never polls.
+  onPublicTunnelStatusChange((status) => {
+    if (!win.isDestroyed()) win.webContents.send(IPC.PublicTunnelStatusChanged, status);
   });
 
   // --- Forward window events to renderer ---

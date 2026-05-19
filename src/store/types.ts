@@ -241,6 +241,8 @@ export interface PendingAction {
   taskId: string;
 }
 
+export type PublicTunnelState = 'idle' | 'starting' | 'active' | 'error';
+
 export interface RemoteAccess {
   enabled: boolean;
   token: string | null;
@@ -249,6 +251,9 @@ export interface RemoteAccess {
   wifiUrl: string | null;
   tailscaleUrl: string | null;
   connectedClients: number;
+  publicUrl: string | null;
+  publicTunnelState: PublicTunnelState;
+  publicTunnelError: string | null;
 }
 
 export interface AppStore {

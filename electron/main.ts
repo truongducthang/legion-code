@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, powerMonitor, session, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -11,7 +11,12 @@ import { stopAllPlanWatchers } from './ipc/plans.js';
 import { stopAllStepsWatchers } from './ipc/steps.js';
 import { IPC } from './ipc/channels.js';
 import { resolveUserShell } from './user-shell.js';
-import { bootstrapTelegram, stopTelegramBot } from './telegram/index.js';
+import { bootstrapTelegram, getCloudflaredPath, stopTelegramBot } from './telegram/index.js';
+import {
+  forceRestartTunnel,
+  getTunnelOwners,
+  stopTunnel as stopSharedTunnel,
+} from './telegram/tunnel.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -212,10 +217,32 @@ app.whenReady().then(() => {
       }
     },
   }).catch((err) => console.warn('[main] telegram bootstrap failed:', err));
+
+  // When the OS resumes from sleep, the existing cloudflared session is
+  // almost always dead (Cloudflare's edge drops idle tunnels after ~30 s).
+  // Even if the local cloudflared process survives, it would reconnect to
+  // a fresh URL we don't capture — so the QR in the desktop UI would point
+  // at a tunnel ID that's been freed. Force a clean restart so the next
+  // status push carries the real new URL.
+  powerMonitor.on('resume', () => {
+    if (getTunnelOwners().size === 0) return;
+    void forceRestartTunnel({ cloudflaredPath: getCloudflaredPath() }).catch((err) => {
+      console.warn('[main] tunnel restart after resume failed:', err);
+    });
+  });
 });
 
 app.on('before-quit', () => {
   void stopTelegramBot().catch(() => undefined);
+});
+
+// Public tunnel release. The Telegram bot release above only drops its own
+// hold; without this, an active 'public' owner would keep `cloudflared`
+// orphaned on macOS/Linux after the Electron parent exits, leaving a
+// dangling trycloudflare.com URL alive until Cloudflare's edge heartbeat
+// times out.
+app.on('before-quit', () => {
+  void stopSharedTunnel({ owner: 'public' }).catch(() => undefined);
 });
 
 app.on('before-quit', () => {
