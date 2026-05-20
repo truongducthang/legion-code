@@ -1,6 +1,8 @@
 <p align="center">
-  <img src="build/logo-text-squared.svg" alt="Parallel Code" height="76">
+  <img src="build/icon.png" alt="Legion" height="96">
 </p>
+
+<h1 align="center">Legion</h1>
 
 <p align="center">
   <strong>Ten agents.<br>
@@ -22,17 +24,11 @@
   <img src="https://img.shields.io/badge/SolidJS-2C4F7C?logo=solid&logoColor=white" alt="SolidJS">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
   <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey" alt="macOS | Linux">
-  <img src="https://img.shields.io/github/license/johannesjo/parallel-code" alt="License">
+  <img src="https://img.shields.io/badge/License-MIT-blue" alt="License">
 </p>
 
 <p align="center">
-  <a href="https://youtu.be/sLf0tsQA3pU">
-    <img src="https://img.shields.io/badge/Watch%20Intro-YouTube-red?logo=youtube&logoColor=white&style=for-the-badge" alt="Watch intro on YouTube">
-  </a>
-</p>
-
-<p align="center">
-  <img src="screens/longer-video.gif" alt="Parallel Code demo" width="800">
+  <sub>Legion is a rebrand and continued fork of <a href="https://github.com/johannesjo/parallel-code">johannesjo/parallel-code</a>. Upstream contributions and original MIT license preserved.</sub>
 </p>
 
 ## Screenshots

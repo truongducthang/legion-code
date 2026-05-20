@@ -83,7 +83,7 @@ export function CloseTaskDialog(props: CloseTaskDialogProps) {
                 <>
                   <p style={{ margin: '0 0 8px' }}>
                     {props.task.externalWorktree
-                      ? 'This will stop all running agents and shells and remove the imported task from Parallel Code. The existing git worktree will be left untouched.'
+                      ? 'This will stop all running agents and shells and remove the imported task from Legion. The existing git worktree will be left untouched.'
                       : willDeleteBranch
                         ? 'This action cannot be undone. The following will be permanently deleted:'
                         : 'The worktree will be removed but the branch will be kept:'}

@@ -35,9 +35,7 @@ export function AgentList(props: AgentListProps) {
           background: '#12181f',
         }}
       >
-        <span style={{ 'font-size': '18px', 'font-weight': '600', color: '#d7e4f0' }}>
-          Parallel Code
-        </span>
+        <span style={{ 'font-size': '18px', 'font-weight': '600', color: '#d7e4f0' }}>Legion</span>
         <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
           <div
             style={{

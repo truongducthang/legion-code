@@ -1,11 +1,17 @@
 {
-  "name": "parallel-code",
+  "name": "legion",
   "version": "1.9.0",
-  "description": "",
+  "description": "Dispatch AI coding agents in parallel, each in its own git worktree.",
   "author": {
-    "name": "Johannes Millan",
-    "email": "contact@super-productivity.com"
+    "name": "Truong Duc Thang",
+    "email": "thangtd@uitgis.vn"
   },
+  "contributors": [
+    {
+      "name": "Johannes Millan",
+      "email": "contact@super-productivity.com"
+    }
+  ],
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
@@ -85,8 +91,8 @@
     "*.{js,cjs,json,md,html,css}": "prettier --write"
   },
   "build": {
-    "appId": "com.parallel-code.app",
-    "productName": "Parallel Code",
+    "appId": "com.legion.app",
+    "productName": "Legion",
     "directories": {
       "buildResources": "build",
       "output": "release"
@@ -118,7 +124,7 @@
       "category": "Development",
       "desktop": {
         "entry": {
-          "StartupWMClass": "parallel-code",
+          "StartupWMClass": "legion",
           "StartupNotify": "true"
         }
       }
@@ -128,7 +134,7 @@
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Parallel Code needs microphone access for voice input in terminal sessions."
+        "NSMicrophoneUsageDescription": "Legion needs microphone access for voice input in terminal sessions."
       },
       "gatekeeperAssess": false,
       "notarize": true,

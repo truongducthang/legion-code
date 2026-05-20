@@ -348,14 +348,40 @@ export function Sidebar() {
               height="24"
               viewBox="0 0 56 56"
               fill="none"
-              stroke={theme.fg}
-              stroke-width="4"
               style={{ 'flex-shrink': '0' }}
             >
-              <line x1="10" y1="6" x2="10" y2="50" />
-              <line x1="22" y1="6" x2="22" y2="50" />
-              <path d="M30 8 H47 V24 H30" />
-              <path d="M49 32 H32 V48 H49" />
+              <defs>
+                <linearGradient id="legionLogoBar1" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#fb7185" />
+                  <stop offset="1" stop-color="#991b1b" />
+                </linearGradient>
+                <linearGradient id="legionLogoBar2" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stop-color="#fcd34d" />
+                  <stop offset="1" stop-color="#b45309" />
+                </linearGradient>
+                <linearGradient id="legionLogoBracket" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0" stop-color="#fde68a" />
+                  <stop offset="1" stop-color="#b45309" />
+                </linearGradient>
+              </defs>
+              <g transform="rotate(-10 28 28)">
+                <rect x="7" y="6" width="6" height="44" rx="3" fill="url(#legionLogoBar1)" />
+                <rect x="19" y="6" width="6" height="44" rx="3" fill="url(#legionLogoBar2)" />
+                <path
+                  d="M34 8 H47 V22"
+                  stroke="url(#legionLogoBracket)"
+                  stroke-width="3.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M47 34 H34 V48"
+                  stroke="url(#legionLogoBracket)"
+                  stroke-width="3.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </g>
             </svg>
             <span
               style={{
@@ -365,7 +391,7 @@ export function Sidebar() {
                 'font-family': "'JetBrains Mono', monospace",
               }}
             >
-              ParallelCode
+              Legion
             </span>
           </div>
           <div style={{ display: 'flex', gap: '6px' }}>

@@ -69,7 +69,7 @@ export function App() {
           <div>
             <p style={{ 'margin-bottom': '12px' }}>Not authenticated.</p>
             <p style={{ 'font-size': '14px', color: '#666' }}>
-              Scan the QR code from the Parallel Code desktop app to connect.
+              Scan the QR code from the Legion desktop app to connect.
             </p>
           </div>
         </div>
