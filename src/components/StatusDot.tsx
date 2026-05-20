@@ -47,6 +47,7 @@ export function StatusDot(props: {
   return (
     <span
       class={isPulsing() ? 'status-dot-pulse' : undefined}
+      title={getDotTooltip(props.status, props.attention)}
       style={{
         display: 'inline-block',
         width: `${px()}px`,
