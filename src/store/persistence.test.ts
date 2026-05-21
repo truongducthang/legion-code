@@ -387,9 +387,14 @@ describe('projects section collapsed persistence', () => {
     expect(store.projectsCollapsed).toBe(true);
   });
 
-  it('ignores a non-boolean projectsCollapsed value', async () => {
+  it.each([
+    ['string', 'yes'],
+    ['number', 1],
+    ['null', null],
+    ['object', { collapsed: true }],
+  ])('ignores a non-boolean projectsCollapsed value (%s)', async (_label, value) => {
     setStore('projectsCollapsed', true);
-    mockInvoke.mockResolvedValueOnce(basePayload({ projectsCollapsed: 'yes' }));
+    mockInvoke.mockResolvedValueOnce(basePayload({ projectsCollapsed: value }));
 
     await loadState();
 

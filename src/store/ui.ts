@@ -179,7 +179,14 @@ export function setShowSidebarProgress(show: boolean): void {
 }
 
 export function setProjectsCollapsed(collapsed: boolean): void {
-  setStore('projectsCollapsed', collapsed);
+  batch(() => {
+    setStore('projectsCollapsed', collapsed);
+    // Drop any project highlight when the section hides — keeping it would let
+    // ↑/↓ walk through invisible items with no visual feedback.
+    if (collapsed && store.sidebarFocusedProjectId !== null) {
+      setStore('sidebarFocusedProjectId', null);
+    }
+  });
 }
 
 export function setShowPromptInput(show: boolean): void {

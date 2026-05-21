@@ -35,3 +35,10 @@ restarts.
 - **WHEN** the Projects section is collapsed
 - **THEN** the add-project control on the section header remains visible and
   usable without first expanding the section
+
+#### Scenario: Arrow-key navigation skips hidden projects
+
+- **WHEN** the sidebar is focused
+- **AND** the Projects section is collapsed
+- **THEN** pressing `↑` or `↓` does not move focus into the hidden project
+  list — navigation stays within the visible task list

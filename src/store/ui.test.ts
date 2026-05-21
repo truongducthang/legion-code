@@ -6,6 +6,8 @@ type MockStore = {
   tasks: Record<string, { id: string }>;
   focusedPanel: Record<string, string>;
   panelUserSize: Record<string, number>;
+  projectsCollapsed: boolean;
+  sidebarFocusedProjectId: string | null;
 };
 
 let mockStore: MockStore;
@@ -79,7 +81,13 @@ vi.mock('../../electron/ipc/channels', () => ({
   IPC: {},
 }));
 
-import { toggleTaskFocusMode, getPanelUserSize, setPanelUserSize, deletePanelUserSize } from './ui';
+import {
+  toggleTaskFocusMode,
+  getPanelUserSize,
+  setPanelUserSize,
+  deletePanelUserSize,
+  setProjectsCollapsed,
+} from './ui';
 
 beforeEach(() => {
   mockStore = {
@@ -91,6 +99,8 @@ beforeEach(() => {
     },
     focusedPanel: {},
     panelUserSize: {},
+    projectsCollapsed: false,
+    sidebarFocusedProjectId: null,
   };
 
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
@@ -174,5 +184,37 @@ describe('panelUserSize', () => {
     setPanelUserSize('keep', 42);
     expect(() => deletePanelUserSize([])).not.toThrow();
     expect(getPanelUserSize('keep')).toBe(42);
+  });
+});
+
+describe('setProjectsCollapsed', () => {
+  it('clears sidebarFocusedProjectId when collapsing', () => {
+    mockStore.projectsCollapsed = false;
+    mockStore.sidebarFocusedProjectId = 'project-1';
+
+    setProjectsCollapsed(true);
+
+    expect(mockStore.projectsCollapsed).toBe(true);
+    expect(mockStore.sidebarFocusedProjectId).toBeNull();
+  });
+
+  it('leaves sidebarFocusedProjectId untouched when expanding', () => {
+    mockStore.projectsCollapsed = true;
+    mockStore.sidebarFocusedProjectId = null;
+
+    setProjectsCollapsed(false);
+
+    expect(mockStore.projectsCollapsed).toBe(false);
+    expect(mockStore.sidebarFocusedProjectId).toBeNull();
+  });
+
+  it('is a no-op for focus when collapsing with no project highlighted', () => {
+    mockStore.projectsCollapsed = false;
+    mockStore.sidebarFocusedProjectId = null;
+
+    setProjectsCollapsed(true);
+
+    expect(mockStore.projectsCollapsed).toBe(true);
+    expect(mockStore.sidebarFocusedProjectId).toBeNull();
   });
 });

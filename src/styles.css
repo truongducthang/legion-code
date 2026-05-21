@@ -932,6 +932,55 @@ textarea::placeholder {
   transform: translateY(1px);
 }
 
+/* Projects-section header toggle (collapsed/expanded). Subtle hover so the
+   whole row reads as clickable, plus a focus ring matching other sidebar
+   controls. */
+.projects-toggle {
+  border-radius: 4px;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.projects-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.projects-toggle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+/* CSS-only collapse animation. The grid-rows trick lets the row collapse from
+   1fr → 0fr without measuring the children. The intermediate `.projects-clip`
+   provides the `overflow: hidden` clip without stealing scroll from the inner
+   list (which needs its own overflow-y: auto). */
+.projects-collapser {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows 0.18s ease,
+    opacity 0.15s ease;
+}
+
+.projects-collapser.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.projects-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .projects-collapser {
+    transition: none;
+  }
+}
+
 .tiling-layout-shell {
   position: relative;
   flex: 1;
