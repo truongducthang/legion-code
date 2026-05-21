@@ -1,5 +1,6 @@
 import { For, Show, createSignal, createEffect, createUniqueId, on } from 'solid-js';
 import { Dialog } from './Dialog';
+import { CustomThemeDialog } from './CustomThemeDialog';
 import {
   getAvailableTerminalFonts,
   fetchAvailableTerminalFonts,
@@ -8,7 +9,8 @@ import {
 } from '../lib/fonts';
 import { presetsForTone } from '../lib/look';
 import type { AppearanceMode } from '../lib/look';
-import { theme, sectionLabelStyle } from '../lib/theme';
+import { theme, sectionLabelStyle, readCssVarsForPreset, terminalBackground } from '../lib/theme';
+import { themeToCss, detectThemeTone } from '../lib/custom-theme';
 import {
   store,
   setTerminalFont,
@@ -52,6 +54,17 @@ export function SettingsDialog(props: SettingsDialogProps) {
   const titleId = createUniqueId();
   const [fonts, setFonts] = createSignal<string[]>(ensureSelectedFont(getAvailableTerminalFonts()));
   const [activeTab, setActiveTab] = createSignal<SettingsTab>('general');
+  const [customThemeDialogOpen, setCustomThemeDialogOpen] = createSignal(false);
+  const [editingThemeId, setEditingThemeId] = createSignal<string | null>(null);
+  const [cloneCss, setCloneCss] = createSignal<string | undefined>(undefined);
+
+  function openCloneDialog(presetId: string, label: string) {
+    const vars = readCssVarsForPreset(presetId);
+    const bg = terminalBackground[presetId as keyof typeof terminalBackground] ?? '#000000';
+    setCloneCss(themeToCss(`${label} (copy)`, '', bg, vars));
+    setEditingThemeId(null);
+    setCustomThemeDialogOpen(true);
+  }
 
   // Fetch system fonts when the dialog opens
   createEffect(
@@ -810,18 +823,48 @@ export function SettingsDialog(props: SettingsDialogProps) {
             </div>
           </div>
 
-          {/* Built-in presets — single picker (Light or Dark mode) */}
+          {/* Theme section header with Create New button */}
+          <div
+            style={{
+              display: 'flex',
+              'align-items': 'center',
+              'justify-content': 'space-between',
+            }}
+          >
+            <div style={{ ...sectionLabelStyle, 'font-weight': '600' }}>Themes</div>
+            <button
+              type="button"
+              onClick={() => {
+                setCloneCss(undefined);
+                setEditingThemeId(null);
+                setCustomThemeDialogOpen(true);
+              }}
+              style={{
+                background: theme.accent,
+                border: 'none',
+                color: theme.accentText,
+                cursor: 'pointer',
+                'font-size': '12px',
+                'font-weight': '600',
+                padding: '4px 12px',
+                'border-radius': '5px',
+              }}
+            >
+              + Create New
+            </button>
+          </div>
+
+          {/* Single mode (Light or Dark): built-ins + matching custom themes in one grid */}
           <Show when={store.appearanceMode !== 'system'}>
-            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
-              <div style={{ ...sectionLabelStyle, 'font-weight': '600' }}>Built-in Presets</div>
-              <div class="settings-theme-grid">
-                <For each={presetsForTone(store.appearanceMode as 'light' | 'dark')}>
-                  {(preset) => {
-                    const isActive = () =>
-                      store.appearanceMode === 'light'
-                        ? store.lightThemeCustomId === null && store.lightThemePreset === preset.id
-                        : store.darkThemeCustomId === null && store.darkThemePreset === preset.id;
-                    return (
+            <div class="settings-theme-grid">
+              <For each={presetsForTone(store.appearanceMode as 'light' | 'dark')}>
+                {(preset) => {
+                  const isActive = () =>
+                    store.appearanceMode === 'light'
+                      ? store.lightThemeCustomId === null && store.lightThemePreset === preset.id
+                      : store.darkThemeCustomId === null && store.darkThemePreset === preset.id;
+                  return (
+                    <div style={{ position: 'relative' }}>
                       <button
                         type="button"
                         class={`settings-theme-card${isActive() ? ' active' : ''}`}
@@ -836,14 +879,96 @@ export function SettingsDialog(props: SettingsDialogProps) {
                         <span class="settings-theme-title">{preset.label}</span>
                         <span class="settings-theme-desc">{preset.description}</span>
                       </button>
-                    );
-                  }}
-                </For>
-              </div>
+                      <button
+                        type="button"
+                        title="Clone as custom theme"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openCloneDialog(preset.id, preset.label);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          top: '4px',
+                          right: '4px',
+                          background: theme.bgElevated,
+                          border: `1px solid ${theme.border}`,
+                          'border-radius': '4px',
+                          color: theme.fgMuted,
+                          cursor: 'pointer',
+                          'font-size': '10px',
+                          padding: '2px 6px',
+                          opacity: '0',
+                          transition: 'opacity 0.15s',
+                        }}
+                        class="preset-clone-btn"
+                      >
+                        Clone
+                      </button>
+                    </div>
+                  );
+                }}
+              </For>
+              <For
+                each={Object.values(store.customThemes).filter(
+                  (ct) => detectThemeTone(ct.vars) === store.appearanceMode,
+                )}
+              >
+                {(ct) => {
+                  const isActive = () =>
+                    store.appearanceMode === 'light'
+                      ? store.lightThemeCustomId === ct.id
+                      : store.darkThemeCustomId === ct.id;
+                  return (
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        class={`settings-theme-card${isActive() ? ' active' : ''}`}
+                        onClick={() => {
+                          if (store.appearanceMode === 'light') {
+                            setLightTheme(store.lightThemePreset, ct.id);
+                          } else {
+                            setDarkTheme(store.darkThemePreset, ct.id);
+                          }
+                        }}
+                      >
+                        <span class="settings-theme-title">{ct.name}</span>
+                        <span class="settings-theme-desc">{ct.description || 'Custom theme'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        title="Edit custom theme"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCloneCss(undefined);
+                          setEditingThemeId(ct.id);
+                          setCustomThemeDialogOpen(true);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          top: '4px',
+                          right: '4px',
+                          background: theme.bgElevated,
+                          border: `1px solid ${theme.border}`,
+                          'border-radius': '4px',
+                          color: theme.fgMuted,
+                          cursor: 'pointer',
+                          'font-size': '10px',
+                          padding: '2px 6px',
+                          opacity: '0',
+                          transition: 'opacity 0.15s',
+                        }}
+                        class="preset-clone-btn"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  );
+                }}
+              </For>
             </div>
           </Show>
 
-          {/* Built-in presets — dual picker (System mode) */}
+          {/* System mode: dual grids, each with built-ins + tone-matching custom themes */}
           <Show when={store.appearanceMode === 'system'}>
             <For each={['dark', 'light'] as const}>
               {(slot) => (
@@ -861,20 +986,106 @@ export function SettingsDialog(props: SettingsDialogProps) {
                             : store.darkThemeCustomId === null &&
                               store.darkThemePreset === preset.id;
                         return (
-                          <button
-                            type="button"
-                            class={`settings-theme-card${isActive() ? ' active' : ''}`}
-                            onClick={() => {
-                              if (slot === 'light') {
-                                setLightTheme(preset.id, null);
-                              } else {
-                                setDarkTheme(preset.id, null);
-                              }
-                            }}
-                          >
-                            <span class="settings-theme-title">{preset.label}</span>
-                            <span class="settings-theme-desc">{preset.description}</span>
-                          </button>
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              type="button"
+                              class={`settings-theme-card${isActive() ? ' active' : ''}`}
+                              onClick={() => {
+                                if (slot === 'light') {
+                                  setLightTheme(preset.id, null);
+                                } else {
+                                  setDarkTheme(preset.id, null);
+                                }
+                              }}
+                            >
+                              <span class="settings-theme-title">{preset.label}</span>
+                              <span class="settings-theme-desc">{preset.description}</span>
+                            </button>
+                            <button
+                              type="button"
+                              title="Clone as custom theme"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openCloneDialog(preset.id, preset.label);
+                              }}
+                              style={{
+                                position: 'absolute',
+                                top: '4px',
+                                right: '4px',
+                                background: theme.bgElevated,
+                                border: `1px solid ${theme.border}`,
+                                'border-radius': '4px',
+                                color: theme.fgMuted,
+                                cursor: 'pointer',
+                                'font-size': '10px',
+                                padding: '2px 6px',
+                                opacity: '0',
+                                transition: 'opacity 0.15s',
+                              }}
+                              class="preset-clone-btn"
+                            >
+                              Clone
+                            </button>
+                          </div>
+                        );
+                      }}
+                    </For>
+                    <For
+                      each={Object.values(store.customThemes).filter(
+                        (ct) => detectThemeTone(ct.vars) === slot,
+                      )}
+                    >
+                      {(ct) => {
+                        const isActive = () =>
+                          slot === 'light'
+                            ? store.lightThemeCustomId === ct.id
+                            : store.darkThemeCustomId === ct.id;
+                        return (
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              type="button"
+                              class={`settings-theme-card${isActive() ? ' active' : ''}`}
+                              onClick={() => {
+                                if (slot === 'light') {
+                                  setLightTheme(store.lightThemePreset, ct.id);
+                                } else {
+                                  setDarkTheme(store.darkThemePreset, ct.id);
+                                }
+                              }}
+                            >
+                              <span class="settings-theme-title">{ct.name}</span>
+                              <span class="settings-theme-desc">
+                                {ct.description || 'Custom theme'}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              title="Edit custom theme"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCloneCss(undefined);
+                                setEditingThemeId(ct.id);
+                                setCustomThemeDialogOpen(true);
+                              }}
+                              style={{
+                                position: 'absolute',
+                                top: '4px',
+                                right: '4px',
+                                background: theme.bgElevated,
+                                border: `1px solid ${theme.border}`,
+                                'border-radius': '4px',
+                                color: theme.fgMuted,
+                                cursor: 'pointer',
+                                'font-size': '10px',
+                                padding: '2px 6px',
+                                opacity: '0',
+                                transition: 'opacity 0.15s',
+                              }}
+                              class="preset-clone-btn"
+                            >
+                              Edit
+                            </button>
+                          </div>
                         );
                       }}
                     </For>
@@ -885,6 +1096,13 @@ export function SettingsDialog(props: SettingsDialogProps) {
           </Show>
         </div>
       </Show>
+
+      <CustomThemeDialog
+        open={customThemeDialogOpen()}
+        editId={editingThemeId()}
+        initialCss={cloneCss()}
+        onClose={() => setCustomThemeDialogOpen(false)}
+      />
 
       <Show when={activeTab() === 'experimental'}>
         <div

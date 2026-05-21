@@ -64,7 +64,13 @@ import {
 } from './git.js';
 import { createTask, deleteTask } from './tasks.js';
 import { listAgents } from './agents.js';
-import { saveAppState, loadAppState } from './persistence.js';
+import {
+  saveAppState,
+  loadAppState,
+  loadCustomThemeFiles,
+  saveCustomThemeFile,
+  deleteCustomThemeFile,
+} from './persistence.js';
 import { loadKeybindings, saveKeybindings } from './keybindings.js';
 import { spawn } from 'child_process';
 import { askAboutCode, cancelAskAboutCode } from './ask-code.js';
@@ -666,6 +672,18 @@ export function registerAllHandlers(win: BrowserWindow): void {
     const json = loadAppState();
     if (json) syncTaskNamesFromJson(json);
     return json;
+  });
+  ipcMain.handle(IPC.LoadCustomThemes, () => loadCustomThemeFiles());
+  ipcMain.handle(IPC.SaveCustomTheme, (_e, args) => {
+    assertString(args.id, 'id');
+    assertString(args.css, 'css');
+    if (!/^[a-zA-Z0-9_-]+$/.test(args.id)) throw new Error('Invalid theme id');
+    saveCustomThemeFile(args.id, args.css);
+  });
+  ipcMain.handle(IPC.DeleteCustomTheme, (_e, args) => {
+    assertString(args.id, 'id');
+    if (!/^[a-zA-Z0-9_-]+$/.test(args.id)) throw new Error('Invalid theme id');
+    deleteCustomThemeFile(args.id);
   });
 
   // --- Keybindings ---

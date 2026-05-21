@@ -80,6 +80,8 @@ export const [store, setStore] = createStore<AppStore>({
   coordinatorModeEnabled: false,
   coordinatorNotificationDelayMs: 60_000,
   coordinatorControlHintDismissed: false,
+  customThemes: {},
+  activeCustomThemeId: null,
   mcpStatus: { running: false, port: null, coordinatorTaskId: null, mcpConfigPath: null },
 });
 

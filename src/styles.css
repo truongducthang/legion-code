@@ -166,7 +166,7 @@ html[data-look='classic'] {
   --bg-selected-subtle: #3e508a33;
   --border: #393b3f;
   --border-subtle: #2d2e32;
-  --border-focus: #5d80ff;
+  --border-focus: #4267ff;
   --fg: #cccdd2;
   --fg-muted: #8b8d93;
   --fg-subtle: #6d7076;
@@ -455,7 +455,7 @@ html[data-look='islands-light'] {
   --fg-muted: #5e6066;
   --fg-subtle: #8d9199;
   --accent: #2c6def;
-  --accent-hover: #245fe0;
+  --accent-hover: #5a8dff;
   --accent-text: #ffffff;
   --link: #2c6def;
   --success: #369650;
@@ -1584,6 +1584,10 @@ body.dragging-task * {
   flex-direction: column;
   gap: 5px;
   width: 100%;
+}
+
+.settings-theme-grid > div:hover .preset-clone-btn {
+  opacity: 1 !important;
 }
 
 .settings-theme-card:hover {

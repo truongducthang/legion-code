@@ -48,6 +48,9 @@ const ALLOWED_CHANNELS = new Set([
   // Persistence
   'save_app_state',
   'load_app_state',
+  'load_custom_themes',
+  'save_custom_theme',
+  'delete_custom_theme',
   // Keybindings
   'load_keybindings',
   'save_keybindings',

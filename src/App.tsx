@@ -65,8 +65,9 @@ import {
 } from './lib/shortcuts';
 import { resolvedBindings, loadKeybindings, dismissMigrationBanner } from './store/keybindings';
 import { setupAutosave } from './store/autosave';
+import { buildCustomThemeCss } from './lib/custom-theme';
 import { osIsDark } from './lib/os-appearance';
-import { applyAppearanceMode } from './store/store';
+import { applyAppearanceMode, markCustomThemesReady, loadCustomThemes } from './store/store';
 import { isMac, mod } from './lib/platform';
 import { createCtrlWheelZoomHandler } from './lib/wheelZoom';
 import { ArenaOverlay } from './arena/ArenaOverlay';
@@ -255,9 +256,34 @@ function App() {
     applyAppearanceMode();
   });
 
-  // Sync theme to <html> so Portal content (dialogs, tooltips) inherits CSS variables
+  // Sync theme to <html> so Portal content (dialogs, tooltips) inherits CSS variables.
+  // data-look always holds the base preset so structural rules (islands, workbench, etc.)
+  // continue to apply. data-custom-theme overlays color variables when a custom theme is active.
   createEffect(() => {
     document.documentElement.dataset.look = store.themePreset;
+    const customId = store.activeCustomThemeId;
+    if (customId) {
+      document.documentElement.dataset.customTheme = customId;
+    } else {
+      delete document.documentElement.dataset.customTheme;
+    }
+  });
+
+  // Inject/update custom theme CSS into a dedicated <style> tag
+  createEffect(() => {
+    const customId = store.activeCustomThemeId;
+    let styleEl = document.getElementById('custom-theme-style') as HTMLStyleElement | null;
+    if (!customId) {
+      if (styleEl) styleEl.textContent = '';
+      return;
+    }
+    const theme = store.customThemes[customId];
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'custom-theme-style';
+      document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = theme ? buildCustomThemeCss(theme) : '';
   });
 
   // Toggle font smoothing CSS class on body
@@ -337,6 +363,10 @@ function App() {
       () => setDockerAvailable(false),
     );
     await loadState();
+    const themesLoaded = await loadCustomThemes();
+    // Only unlock slot-ID sanitization when the IPC call succeeded. On failure
+    // customThemes remains {} and we must not null out the user's persisted selections.
+    if (themesLoaded) markCustomThemesReady();
     await loadKeybindings();
 
     // Rewrite MCP config files for persisted coordinator tasks so the new

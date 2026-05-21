@@ -46,6 +46,9 @@ export enum IPC {
   // Persistence
   SaveAppState = 'save_app_state',
   LoadAppState = 'load_app_state',
+  LoadCustomThemes = 'load_custom_themes',
+  SaveCustomTheme = 'save_custom_theme',
+  DeleteCustomTheme = 'delete_custom_theme',
 
   // Keybindings
   LoadKeybindings = 'load_keybindings',
