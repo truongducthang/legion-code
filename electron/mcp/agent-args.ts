@@ -24,7 +24,7 @@ function tomlStringArray(values: string[]): string {
 
 function tomlStringMap(values: Record<string, string>): string {
   return `{ ${Object.entries(values)
-    .map(([key, value]) => `${key} = ${tomlString(value)}`)
+    .map(([key, value]) => `${tomlString(key)} = ${tomlString(value)}`)
     .join(', ')} }`;
 }
 

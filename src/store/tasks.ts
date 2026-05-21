@@ -29,6 +29,10 @@ import { parseGitHubUrl, taskNameFromGitHubUrl } from '../lib/github-url';
 import type { Agent, Task, GitIsolationMode } from './types';
 import type { DockerSource } from '../lib/docker';
 import { COORDINATOR_PREAMBLE } from './coordinator-preamble';
+import {
+  clampCoordinatorConcurrentTasks,
+  DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+} from '../lib/coordinator-limits';
 import { getCoordinatorChildren, isCoordinatedChild } from './sidebar-order';
 
 function initTaskInStore(
@@ -257,7 +261,11 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
       opts.coordinatorMode && effectivePrompt
         ? COORDINATOR_PREAMBLE.replace(
             /\{\{MAX_CONCURRENT\}\}/g,
-            String(opts.maxConcurrentTasks ?? 3),
+            String(
+              clampCoordinatorConcurrentTasks(
+                opts.maxConcurrentTasks ?? DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+              ),
+            ),
           ) +
           `Use \`${opts.baseBranch}\` as the baseBranch for all sub-tasks.\n\n` +
           effectivePrompt

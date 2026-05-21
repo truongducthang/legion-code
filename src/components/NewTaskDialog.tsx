@@ -32,6 +32,12 @@ import { ProjectSelect } from './ProjectSelect';
 import { SymlinkDirPicker } from './SymlinkDirPicker';
 import type { AgentDef } from '../ipc/types';
 import { DEFAULT_DOCKER_IMAGE, PROJECT_DOCKERFILE_RELATIVE_PATH } from '../lib/docker';
+import {
+  clampCoordinatorConcurrentTasks,
+  DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+  MAX_COORDINATOR_CONCURRENT_TASKS,
+  MIN_COORDINATOR_CONCURRENT_TASKS,
+} from '../lib/coordinator-limits';
 
 interface NewTaskDialogProps {
   open: boolean;
@@ -65,7 +71,9 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
   } | null>(null);
   const [coordinatorMode, setCoordinatorMode] = createSignal(false);
   const [propagateSkipPermissions, setPropagateSkipPermissions] = createSignal(false);
-  const [maxConcurrentTasks, setMaxConcurrentTasks] = createSignal(3);
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = createSignal(
+    DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+  );
   const hasActiveCoordinator = () =>
     Object.values(store.tasks).some(
       (t) => t.coordinatorMode && !t.closingStatus && t.projectId === selectedProjectId(),
@@ -553,7 +561,9 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
           : undefined,
         coordinatorMode: coordinatorMode() || undefined,
         propagateSkipPermissions: coordinatorMode() ? propagateSkipPermissions() : undefined,
-        maxConcurrentTasks: coordinatorMode() ? maxConcurrentTasks() : undefined,
+        maxConcurrentTasks: coordinatorMode()
+          ? clampCoordinatorConcurrentTasks(maxConcurrentTasks())
+          : undefined,
       });
       // Drop flow: prefill prompt without auto-sending
       if (isFromDrop && p) {
@@ -1137,12 +1147,12 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
                   Max concurrent sub-tasks:
                   <input
                     type="number"
-                    min="1"
-                    max="20"
+                    min={MIN_COORDINATOR_CONCURRENT_TASKS}
+                    max={MAX_COORDINATOR_CONCURRENT_TASKS}
                     value={maxConcurrentTasks()}
                     onInput={(e) => {
                       const v = parseInt(e.currentTarget.value, 10);
-                      if (!isNaN(v) && v >= 1) setMaxConcurrentTasks(v);
+                      if (!isNaN(v)) setMaxConcurrentTasks(clampCoordinatorConcurrentTasks(v));
                     }}
                     style={{
                       width: '60px',

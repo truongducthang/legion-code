@@ -28,6 +28,22 @@ describe('MCP agent launch args', () => {
     ]);
   });
 
+  it('quotes Codex inline config env keys so non-bare TOML keys remain valid', () => {
+    const override = buildCodexMcpConfigOverride({
+      mcpServers: {
+        'parallel-code': {
+          command: 'node',
+          args: [],
+          env: {
+            'TOKEN.WITH.DOTS': 'token-1',
+          },
+        },
+      },
+    });
+
+    expect(override).toContain('"TOKEN.WITH.DOTS" = "token-1"');
+  });
+
   it('uses --mcp-config for Claude-compatible agents', () => {
     expect(buildMcpLaunchArgs('claude', '/tmp/config.json', config)).toEqual([
       '--mcp-config',
