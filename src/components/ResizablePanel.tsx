@@ -10,10 +10,11 @@ export interface PanelChild {
    *  in horizontal splits lets wide intrinsic content push the column far
    *  past its min. Use whenever content-driven sizing would surprise. */
   defaultSize?: number;
-  /** Maximum content-driven size (px) for non-absorbers without a user-pinned
-   *  size. User drag pins intentionally ignore this so a panel can still be
-   *  made larger when desired. */
-  maxAutoSize?: number;
+  /** Maximum content-driven size for non-absorbers without a user-pinned size.
+   *  A number is treated as px; a string is used verbatim as a CSS length
+   *  (e.g. `min(400px, 33vh)`). User drag pins intentionally ignore this so a
+   *  panel can still be made larger when desired. */
+  maxAutoSize?: number | string;
   /** Reactive. When true, the child stays content-sized: no user-pin lookup,
    *  no drag-time override, and drags adjacent to it route the freed space
    *  through the layout absorber. Use for panels whose intrinsic height is
@@ -151,7 +152,12 @@ export function ResizablePanel(props: ResizablePanelProps) {
     return {
       flex: '0 0 auto',
       [minDim]: `${min}px`,
-      ...(child.maxAutoSize !== undefined ? { [maxDim]: `${child.maxAutoSize}px` } : {}),
+      ...(child.maxAutoSize !== undefined
+        ? {
+            [maxDim]:
+              typeof child.maxAutoSize === 'number' ? `${child.maxAutoSize}px` : child.maxAutoSize,
+          }
+        : {}),
       overflow: 'hidden',
     };
   }

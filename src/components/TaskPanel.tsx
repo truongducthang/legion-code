@@ -48,8 +48,12 @@ interface TaskPanelProps {
   isActive: boolean;
 }
 
-const STEPS_PANEL_AUTO_MAX_PX = 240;
-const CHANGED_FILES_PANEL_AUTO_MAX_PX = 300;
+// Panels that auto-grow to their content share one ceiling so a long body
+// can't take over the column: never taller than the panel's own px cap, and
+// never taller than 33vh. User drag pins intentionally bypass this.
+const STEPS_PANEL_AUTO_MAX = 'min(240px, 33vh)';
+const CHANGED_FILES_PANEL_AUTO_MAX = 'min(300px, 33vh)';
+const NOTES_PANEL_AUTO_MAX = 'min(400px, 33vh)';
 
 export function TaskPanel(props: TaskPanelProps) {
   const [showCloseConfirm, setShowCloseConfirm] = createSignal(false);
@@ -362,7 +366,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const stepsSectionChild: PanelChild = {
     id: 'steps-section',
     minSize: 28,
-    maxAutoSize: STEPS_PANEL_AUTO_MAX_PX,
+    maxAutoSize: STEPS_PANEL_AUTO_MAX,
     content: () => stepsSectionEl,
   };
 
@@ -400,13 +404,14 @@ export function TaskPanel(props: TaskPanelProps) {
   const notesChild: PanelChild = {
     id: 'notes',
     minSize: 100,
+    maxAutoSize: NOTES_PANEL_AUTO_MAX,
     content: () => notesBodyEl,
   };
 
   const changedFilesChild: PanelChild = {
     id: 'changed-files',
     minSize: 100,
-    maxAutoSize: CHANGED_FILES_PANEL_AUTO_MAX_PX,
+    maxAutoSize: CHANGED_FILES_PANEL_AUTO_MAX,
     content: () => changedFilesEl,
   };
 
