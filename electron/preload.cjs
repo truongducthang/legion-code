@@ -48,6 +48,9 @@ const ALLOWED_CHANNELS = new Set([
   // Persistence
   'save_app_state',
   'load_app_state',
+  'load_custom_themes',
+  'save_custom_theme',
+  'delete_custom_theme',
   // Keybindings
   'load_keybindings',
   'save_keybindings',
@@ -123,6 +126,36 @@ const ALLOWED_CHANNELS = new Set([
   'pr_checks_update',
   // Logging
   'log_from_renderer',
+  // Auto-update
+  'check_for_updates',
+  'download_update',
+  'quit_and_install_update',
+  'get_update_status',
+  'update_status_changed',
+  // MCP / Coordinating agent
+  'set_coordinator_mode_enabled',
+  'start_mcp_server',
+  'stop_mcp_server',
+  'get_mcp_status',
+  'get_mcp_logs',
+  'mcp_task_created',
+  'mcp_task_closed',
+  'mcp_task_state_sync',
+  'mcp_control_changed',
+  'mcp_coordinator_notification_staged',
+  'mcp_coordinator_notification_cleared',
+  'mcp_coordinator_orphaned_notification',
+  'mcp_coordinator_registered',
+  'mcp_coordinator_deregistered',
+  'mcp_coordinator_notification_ack',
+  'mcp_coordinator_notification_drop_ack',
+  'mcp_coordinated_task_prompt_delivered',
+  'mcp_coordinator_restage_after_user_send',
+  'mcp_hydrate_coordinated_task',
+  'mcp_task_hydrated',
+  'mcp_stale_url_warning',
+  'mcp_coordinated_task_closed',
+  'mcp_task_cleanup_failed',
 ]);
 
 function isAllowedChannel(channel) {

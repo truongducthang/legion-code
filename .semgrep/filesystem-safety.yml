@@ -12,6 +12,9 @@ rules:
       include:
         - '**/electron/mcp/**'
         - '**/electron/ipc/register.ts'
+      exclude:
+        - '**/electron/mcp/atomic.ts'
+        - '**/*.test.ts'
 
   - id: copyfilesync-side-effect
     pattern: fs.copyFileSync($SRC, $DST)

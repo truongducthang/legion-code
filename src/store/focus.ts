@@ -307,8 +307,11 @@ export function navigateRow(direction: 'up' | 'down'): void {
   if (store.sidebarFocused) {
     const { projects, sidebarFocusedProjectId, sidebarFocusedTaskId } = store;
     const allTasks = computeSidebarTaskOrder();
+    // When the Projects section is collapsed, hidden items aren't a navigable
+    // axis — ↑/↓ stays in task mode regardless of any leftover project focus.
+    const projectsNavigable = !store.projectsCollapsed && projects.length > 0;
 
-    if (sidebarFocusedProjectId !== null) {
+    if (projectsNavigable && sidebarFocusedProjectId !== null) {
       // Project mode: navigate within projects
       const projectIdx = projects.findIndex((p) => p.id === sidebarFocusedProjectId);
       if (direction === 'up') {
@@ -329,10 +332,10 @@ export function navigateRow(direction: 'up' | 'down'): void {
     }
 
     // Task mode: navigate within tasks (highlight only, don't activate)
-    if (allTasks.length === 0 && projects.length === 0) return;
+    if (allTasks.length === 0 && !projectsNavigable) return;
     const currentIdx = sidebarFocusedTaskId ? allTasks.indexOf(sidebarFocusedTaskId) : -1;
     if (direction === 'up') {
-      if (currentIdx <= 0 && projects.length > 0) {
+      if (currentIdx <= 0 && projectsNavigable) {
         // At first task (or no task): enter project mode at last project
         setStore('sidebarFocusedTaskId', null);
         setStore('sidebarFocusedProjectId', projects[projects.length - 1].id);

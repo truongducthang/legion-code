@@ -1,16 +1,8 @@
-import { onMount, onCleanup, createSignal, Show, For } from 'solid-js';
+import { onMount, onCleanup, createSignal, Show } from 'solid-js';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { TERMINAL_SCROLLBACK_LINES } from '../lib/terminalConstants';
-import {
-  subscribeAgent,
-  unsubscribeAgent,
-  onOutput,
-  onScrollback,
-  sendInput,
-  agents,
-  status,
-} from './ws';
+import { subscribeAgent, unsubscribeAgent, onOutput, onScrollback, agents, status } from './ws';
 
 // Base64 decode (same approach as desktop)
 const B64 = new Uint8Array(128);
@@ -36,15 +28,6 @@ function b64decode(b64: string): Uint8Array {
   return out;
 }
 
-// Build control characters at runtime via lookup — avoids Vite stripping \r during build
-const KEYS: Record<number, string> = {};
-[3, 4, 13, 27].forEach((c) => {
-  KEYS[c] = String.fromCharCode(c);
-});
-function key(c: number): string {
-  return KEYS[c];
-}
-
 interface AgentDetailProps {
   agentId: string;
   taskName: string;
@@ -53,10 +36,8 @@ interface AgentDetailProps {
 
 export function AgentDetail(props: AgentDetailProps) {
   let termContainer: HTMLDivElement | undefined;
-  let inputRef: HTMLInputElement | undefined;
   let term: Terminal | undefined;
   let fitAddon: FitAddon | undefined;
-  const [inputText, setInputText] = createSignal('');
   const [atBottom, setAtBottom] = createSignal(true);
   const [termFontSize, setTermFontSize] = createSignal(10);
 
@@ -68,24 +49,8 @@ export function AgentDetail(props: AgentDetailProps) {
   onMount(() => {
     if (!termContainer) return;
 
-    // Attach native Enter detection directly to the input element.
-    // SolidJS event delegation + Android IMEs are unreliable for form submit.
-    if (inputRef) {
-      const enterHandler = (e: Event) => {
-        const ke = e as KeyboardEvent;
-        if (ke.key === 'Enter' || ke.keyCode === 13) {
-          e.preventDefault();
-          handleSend();
-        }
-      };
-      inputRef.addEventListener('keydown', enterHandler);
-      onCleanup(() => {
-        inputRef?.removeEventListener('keydown', enterHandler);
-      });
-    }
-
     // Disable xterm helper elements that capture touch events over
-    // the header/input areas (not needed since disableStdin is true)
+    // the header/toolbar areas (not needed since disableStdin is true)
     const style = document.createElement('style');
     style.textContent =
       '.xterm-helper-textarea, .xterm-composition-view { pointer-events: none !important; }';
@@ -184,28 +149,6 @@ export function AgentDetail(props: AgentDetailProps) {
     });
   });
 
-  // Dedup guard: multiple event sources (keydown, onInput fallback) can
-  // fire handleSend for the same Enter press. The sendId ensures only
-  // the latest invocation sends the delayed \r.
-  let lastSendId = 0;
-
-  function handleSend() {
-    const text = inputText();
-    if (!text) return;
-    const id = ++lastSendId;
-    // Send text and Enter separately — TUI apps (Claude Code, Codex)
-    // treat \r inside a pasted block as a literal, not as confirmation.
-    sendInput(props.agentId, text);
-    setInputText('');
-    setTimeout(() => {
-      if (lastSendId === id) sendInput(props.agentId, key(13));
-    }, 50);
-  }
-
-  function handleQuickAction(data: string) {
-    sendInput(props.agentId, data);
-  }
-
   function scrollToBottom() {
     term?.scrollToBottom();
   }
@@ -288,7 +231,7 @@ export function AgentDetail(props: AgentDetailProps) {
       </Show>
 
       {/* Terminal — overflow:hidden clips xterm.js overlays so they don't
-           capture touch events over the header/input areas */}
+           capture touch events over the header/toolbar areas */}
       <div
         ref={termContainer}
         style={{
@@ -306,7 +249,7 @@ export function AgentDetail(props: AgentDetailProps) {
           onClick={scrollToBottom}
           style={{
             position: 'absolute',
-            bottom: '140px',
+            bottom: '70px',
             right: '16px',
             width: '40px',
             height: '40px',
@@ -327,13 +270,13 @@ export function AgentDetail(props: AgentDetailProps) {
         </button>
       </Show>
 
-      {/* Input area */}
+      {/* Toolbar — font size controls only (mobile view is read-only) */}
       <div
         style={{
           'border-top': '1px solid #223040',
           padding: '8px 10px max(8px, env(safe-area-inset-bottom)) 10px',
           display: 'flex',
-          'flex-direction': 'column',
+          'justify-content': 'flex-end',
           gap: '6px',
           'flex-shrink': '0',
           background: '#12181f',
@@ -341,168 +284,60 @@ export function AgentDetail(props: AgentDetailProps) {
           'z-index': '10',
         }}
       >
-        {/* No <form> — it triggers Chrome's autofill heuristics on Android.
-             name/id/autocomplete use gibberish so Chrome can't classify the field. */}
-        <div style={{ display: 'flex', gap: '8px', 'align-items': 'center' }}>
-          <input
-            ref={inputRef}
-            type="text"
-            enterkeyhint="send"
-            name="xq9k_cmd"
-            id="xq9k_cmd"
-            autocomplete="xq9k_cmd"
-            autocorrect="off"
-            autocapitalize="off"
-            spellcheck={false}
-            inputmode="text"
-            value={inputText()}
-            onInput={(e) => {
-              const val = e.currentTarget.value;
-              // Fallback: some Android IMEs insert newline into the value
-              const last = val.charCodeAt(val.length - 1);
-              if (last === 10 || last === 13) {
-                const clean = val.slice(0, -1);
-                setInputText(clean);
-                e.currentTarget.value = clean;
-                handleSend();
-                return;
-              }
-              setInputText(val);
-            }}
-            placeholder="Type command..."
-            style={{
-              flex: '1',
-              background: '#10161d',
-              border: '1px solid #223040',
-              'border-radius': '12px',
-              padding: '10px 14px',
-              color: '#d7e4f0',
-              'font-size': '15px',
-              'font-family': "'JetBrains Mono', 'Courier New', monospace",
-              outline: 'none',
-              transition: 'border-color 0.16s ease',
-            }}
-          />
-          <button
-            type="button"
-            disabled={!inputText().trim()}
-            onClick={() => handleSend()}
-            style={{
-              background: inputText().trim() ? '#2ec8ff' : '#1a2430',
-              border: 'none',
-              'border-radius': '50%',
-              width: '40px',
-              height: '40px',
-              color: inputText().trim() ? '#031018' : '#678197',
-              cursor: inputText().trim() ? 'pointer' : 'default',
-              display: 'flex',
-              'align-items': 'center',
-              'justify-content': 'center',
-              padding: '0',
-              'flex-shrink': '0',
-              'touch-action': 'manipulation',
-              transition: 'background 0.15s, color 0.15s',
-            }}
-            title="Send"
-          >
-            <svg width="18" height="18" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M7 12V2M7 2L3 6M7 2l4 4"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
-        </div>
-
-        <div style={{ display: 'flex', gap: '6px', 'flex-wrap': 'wrap' }}>
-          <For
-            each={[
-              { label: 'Enter', data: () => key(13) },
-              { label: '\u2191', data: () => key(27) + '[A' },
-              { label: '\u2193', data: () => key(27) + '[B' },
-              { label: 'Ctrl+C', data: () => key(3) },
-            ]}
-          >
-            {(action) => (
-              <button
-                onClick={() => handleQuickAction(action.data())}
-                style={{
-                  background: '#1a2430',
-                  border: '1px solid #223040',
-                  'border-radius': '8px',
-                  padding: '10px 16px',
-                  color: '#9bb0c3',
-                  'font-size': '14px',
-                  'font-family': "'JetBrains Mono', 'Courier New', monospace",
-                  cursor: 'pointer',
-                  'touch-action': 'manipulation',
-                  transition: 'background 0.16s ease',
-                }}
-              >
-                {action.label}
-              </button>
-            )}
-          </For>
-          <div style={{ 'margin-left': 'auto', display: 'flex', gap: '6px' }}>
-            <button
-              onClick={() => {
-                const next = Math.max(MIN_FONT, termFontSize() - 1);
-                setTermFontSize(next);
-                if (term) {
-                  term.options.fontSize = next;
-                  fitAddon?.fit();
-                }
-              }}
-              disabled={termFontSize() <= MIN_FONT}
-              style={{
-                background: '#1a2430',
-                border: '1px solid #223040',
-                'border-radius': '8px',
-                padding: '10px 14px',
-                color: termFontSize() <= MIN_FONT ? '#344050' : '#9bb0c3',
-                'font-size': '14px',
-                'font-weight': '700',
-                'font-family': "'JetBrains Mono', 'Courier New', monospace",
-                cursor: termFontSize() <= MIN_FONT ? 'default' : 'pointer',
-                'touch-action': 'manipulation',
-                transition: 'background 0.16s ease',
-              }}
-              title="Decrease font size"
-            >
-              A-
-            </button>
-            <button
-              onClick={() => {
-                const next = Math.min(MAX_FONT, termFontSize() + 1);
-                setTermFontSize(next);
-                if (term) {
-                  term.options.fontSize = next;
-                  fitAddon?.fit();
-                }
-              }}
-              disabled={termFontSize() >= MAX_FONT}
-              style={{
-                background: '#1a2430',
-                border: '1px solid #223040',
-                'border-radius': '8px',
-                padding: '10px 14px',
-                color: termFontSize() >= MAX_FONT ? '#344050' : '#9bb0c3',
-                'font-size': '14px',
-                'font-weight': '700',
-                'font-family': "'JetBrains Mono', 'Courier New', monospace",
-                cursor: termFontSize() >= MAX_FONT ? 'default' : 'pointer',
-                'touch-action': 'manipulation',
-                transition: 'background 0.16s ease',
-              }}
-              title="Increase font size"
-            >
-              A+
-            </button>
-          </div>
-        </div>
+        <button
+          onClick={() => {
+            const next = Math.max(MIN_FONT, termFontSize() - 1);
+            setTermFontSize(next);
+            if (term) {
+              term.options.fontSize = next;
+              fitAddon?.fit();
+            }
+          }}
+          disabled={termFontSize() <= MIN_FONT}
+          style={{
+            background: '#1a2430',
+            border: '1px solid #223040',
+            'border-radius': '8px',
+            padding: '10px 14px',
+            color: termFontSize() <= MIN_FONT ? '#344050' : '#9bb0c3',
+            'font-size': '14px',
+            'font-weight': '700',
+            'font-family': "'JetBrains Mono', 'Courier New', monospace",
+            cursor: termFontSize() <= MIN_FONT ? 'default' : 'pointer',
+            'touch-action': 'manipulation',
+            transition: 'background 0.16s ease',
+          }}
+          title="Decrease font size"
+        >
+          A-
+        </button>
+        <button
+          onClick={() => {
+            const next = Math.min(MAX_FONT, termFontSize() + 1);
+            setTermFontSize(next);
+            if (term) {
+              term.options.fontSize = next;
+              fitAddon?.fit();
+            }
+          }}
+          disabled={termFontSize() >= MAX_FONT}
+          style={{
+            background: '#1a2430',
+            border: '1px solid #223040',
+            'border-radius': '8px',
+            padding: '10px 14px',
+            color: termFontSize() >= MAX_FONT ? '#344050' : '#9bb0c3',
+            'font-size': '14px',
+            'font-weight': '700',
+            'font-family': "'JetBrains Mono', 'Courier New', monospace",
+            cursor: termFontSize() >= MAX_FONT ? 'default' : 'pointer',
+            'touch-action': 'manipulation',
+            transition: 'background 0.16s ease',
+          }}
+          title="Increase font size"
+        >
+          A+
+        </button>
       </div>
     </div>
   );

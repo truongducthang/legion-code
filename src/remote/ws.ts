@@ -155,11 +155,3 @@ export function onScrollback(agentId: string, fn: ScrollbackListener): () => voi
     if (set?.size === 0) scrollbackListeners.delete(agentId);
   };
 }
-
-export function sendInput(agentId: string, data: string): void {
-  send({ type: 'input', agentId, data });
-}
-
-export function sendKill(agentId: string): void {
-  send({ type: 'kill', agentId });
-}

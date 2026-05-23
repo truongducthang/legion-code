@@ -1,5 +1,6 @@
-import { For, Show, createSignal, createEffect, createUniqueId, on } from 'solid-js';
+import { For, Show, Switch, Match, createSignal, createEffect, createUniqueId, on } from 'solid-js';
 import { Dialog } from './Dialog';
+import { CustomThemeDialog } from './CustomThemeDialog';
 import {
   getAvailableTerminalFonts,
   fetchAvailableTerminalFonts,
@@ -8,7 +9,8 @@ import {
 } from '../lib/fonts';
 import { presetsForTone } from '../lib/look';
 import type { AppearanceMode } from '../lib/look';
-import { theme, sectionLabelStyle } from '../lib/theme';
+import { theme, sectionLabelStyle, readCssVarsForPreset, terminalBackground } from '../lib/theme';
+import { themeToCss, detectThemeTone } from '../lib/custom-theme';
 import {
   store,
   setTerminalFont,
@@ -29,6 +31,10 @@ import {
   setAppearanceMode,
   setLightTheme,
   setDarkTheme,
+  setCoordinatorModeEnabled,
+  setCoordinatorNotificationDelayMs,
+  updateStatus,
+  checkForUpdates,
 } from '../store/store';
 import { CustomAgentEditor } from './CustomAgentEditor';
 import { mod } from '../lib/platform';
@@ -44,12 +50,47 @@ function ensureSelectedFont(available: string[]): string[] {
   return [store.terminalFont, ...available];
 }
 
-type SettingsTab = 'general' | 'themes';
+type SettingsTab = 'general' | 'themes' | 'experimental';
 
 export function SettingsDialog(props: SettingsDialogProps) {
   const titleId = createUniqueId();
   const [fonts, setFonts] = createSignal<string[]>(ensureSelectedFont(getAvailableTerminalFonts()));
   const [activeTab, setActiveTab] = createSignal<SettingsTab>('general');
+  const [customThemeDialogOpen, setCustomThemeDialogOpen] = createSignal(false);
+  const [editingThemeId, setEditingThemeId] = createSignal<string | null>(null);
+  const [cloneCss, setCloneCss] = createSignal<string | undefined>(undefined);
+
+  function openCloneDialog(presetId: string, label: string) {
+    const vars = readCssVarsForPreset(presetId);
+    const bg = terminalBackground[presetId as keyof typeof terminalBackground] ?? '#000000';
+    setCloneCss(themeToCss(`${label} (copy)`, '', bg, vars));
+    setEditingThemeId(null);
+    setCustomThemeDialogOpen(true);
+  }
+
+  // Styles shared across the Updates section's rows, buttons and messages.
+  const updateRowStyle = {
+    display: 'flex',
+    'align-items': 'center',
+    'justify-content': 'space-between',
+    gap: '12px',
+  };
+  const updateSecondaryButtonStyle = (disabled: boolean) => ({
+    padding: '6px 12px',
+    'border-radius': '6px',
+    border: `1px solid ${theme.border}`,
+    background: theme.bgElevated,
+    color: theme.fg,
+    'font-size': '13px',
+    cursor: disabled ? 'default' : 'pointer',
+    opacity: disabled ? '0.6' : '1',
+  });
+  const updateMessageStyle = (color: string) => ({ 'font-size': '12px', color });
+
+  // Phases that permit a manual check. An allow-list keeps a future phase
+  // from defaulting to "shown" the way excluding non-checkable phases would.
+  const canCheckForUpdates = () =>
+    ['idle', 'checking', 'up-to-date', 'available', 'error'].includes(updateStatus().phase);
 
   // Fetch system fonts when the dialog opens
   createEffect(
@@ -137,7 +178,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
           'margin-bottom': '2px',
         }}
       >
-        <For each={['general', 'themes'] as SettingsTab[]}>
+        <For each={['general', 'themes', 'experimental'] as SettingsTab[]}>
           {(tab) => (
             <button
               role="tab"
@@ -146,6 +187,13 @@ export function SettingsDialog(props: SettingsDialogProps) {
               id={`settings-tabbutton-${tab}`}
               type="button"
               onClick={() => setActiveTab(tab)}
+              onKeyDown={(e) => {
+                const tabs: SettingsTab[] = ['general', 'themes', 'experimental'];
+                const idx = tabs.indexOf(tab);
+                if (e.key === 'ArrowRight') setActiveTab(tabs[(idx + 1) % tabs.length]);
+                else if (e.key === 'ArrowLeft')
+                  setActiveTab(tabs[(idx + tabs.length - 1) % tabs.length]);
+              }}
               style={{
                 background: 'transparent',
                 border: 'none',
@@ -161,7 +209,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
                 transition: 'color 0.15s, border-color 0.15s',
               }}
             >
-              {tab === 'general' ? 'General' : 'Themes'}
+              {tab === 'general' ? 'General' : tab === 'themes' ? 'Themes' : 'Experimental'}
             </button>
           )}
         </For>
@@ -753,6 +801,101 @@ export function SettingsDialog(props: SettingsDialogProps) {
               </div>
             </label>
           </div>
+
+          <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+            <div style={{ ...sectionLabelStyle, 'font-weight': '600' }}>Updates</div>
+            <div
+              style={{
+                display: 'flex',
+                'flex-direction': 'column',
+                gap: '10px',
+                padding: '12px',
+                'border-radius': '8px',
+                background: theme.bgInput,
+                border: `1px solid ${theme.border}`,
+              }}
+            >
+              <div style={updateRowStyle}>
+                <span style={{ 'font-size': '14px', color: theme.fg }}>
+                  Current version
+                  <Show when={updateStatus().currentVersion}>
+                    {' '}
+                    <span style={{ color: theme.fgMuted }}>v{updateStatus().currentVersion}</span>
+                  </Show>
+                </span>
+                <Show when={canCheckForUpdates()}>
+                  <button
+                    type="button"
+                    disabled={updateStatus().phase === 'checking'}
+                    onClick={() => void checkForUpdates()}
+                    style={updateSecondaryButtonStyle(updateStatus().phase === 'checking')}
+                  >
+                    {updateStatus().phase === 'checking' ? 'Checking…' : 'Check for updates'}
+                  </button>
+                </Show>
+              </div>
+
+              <Switch>
+                <Match when={updateStatus().phase === 'unsupported'}>
+                  <span style={updateMessageStyle(theme.fgSubtle)}>
+                    Automatic updates are not available for this build. Download the latest release
+                    from GitHub to update.
+                  </span>
+                </Match>
+
+                <Match when={updateStatus().phase === 'up-to-date'}>
+                  <span style={updateMessageStyle(theme.fgSubtle)}>
+                    You are on the latest version.
+                  </span>
+                </Match>
+
+                <Match when={updateStatus().phase === 'available'}>
+                  <span style={updateMessageStyle(theme.fg)}>
+                    Version {updateStatus().latestVersion} is available. Use the update button in
+                    the sidebar to install.
+                  </span>
+                </Match>
+
+                <Match when={updateStatus().phase === 'downloading'}>
+                  <div style={{ display: 'flex', 'flex-direction': 'column', gap: '6px' }}>
+                    <span style={updateMessageStyle(theme.fgSubtle)}>
+                      Downloading update… {updateStatus().downloadPercent}%
+                    </span>
+                    <div
+                      style={{
+                        height: '6px',
+                        'border-radius': '3px',
+                        background: theme.bgElevated,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${updateStatus().downloadPercent}%`,
+                          background: theme.accent,
+                          transition: 'width 0.2s',
+                        }}
+                      />
+                    </div>
+                  </div>
+                </Match>
+
+                <Match when={updateStatus().phase === 'downloaded'}>
+                  <span style={updateMessageStyle(theme.fg)}>
+                    Version {updateStatus().latestVersion} is downloaded. Use the update button in
+                    the sidebar to restart &amp; install.
+                  </span>
+                </Match>
+
+                <Match when={updateStatus().phase === 'error'}>
+                  <span style={updateMessageStyle(theme.error)}>
+                    Update check failed: {updateStatus().error}
+                  </span>
+                </Match>
+              </Switch>
+            </div>
+          </div>
         </div>
       </Show>
 
@@ -801,18 +944,48 @@ export function SettingsDialog(props: SettingsDialogProps) {
             </div>
           </div>
 
-          {/* Built-in presets — single picker (Light or Dark mode) */}
+          {/* Theme section header with Create New button */}
+          <div
+            style={{
+              display: 'flex',
+              'align-items': 'center',
+              'justify-content': 'space-between',
+            }}
+          >
+            <div style={{ ...sectionLabelStyle, 'font-weight': '600' }}>Themes</div>
+            <button
+              type="button"
+              onClick={() => {
+                setCloneCss(undefined);
+                setEditingThemeId(null);
+                setCustomThemeDialogOpen(true);
+              }}
+              style={{
+                background: theme.accent,
+                border: 'none',
+                color: theme.accentText,
+                cursor: 'pointer',
+                'font-size': '12px',
+                'font-weight': '600',
+                padding: '4px 12px',
+                'border-radius': '5px',
+              }}
+            >
+              + Create New
+            </button>
+          </div>
+
+          {/* Single mode (Light or Dark): built-ins + matching custom themes in one grid */}
           <Show when={store.appearanceMode !== 'system'}>
-            <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
-              <div style={{ ...sectionLabelStyle, 'font-weight': '600' }}>Built-in Presets</div>
-              <div class="settings-theme-grid">
-                <For each={presetsForTone(store.appearanceMode as 'light' | 'dark')}>
-                  {(preset) => {
-                    const isActive = () =>
-                      store.appearanceMode === 'light'
-                        ? store.lightThemeCustomId === null && store.lightThemePreset === preset.id
-                        : store.darkThemeCustomId === null && store.darkThemePreset === preset.id;
-                    return (
+            <div class="settings-theme-grid">
+              <For each={presetsForTone(store.appearanceMode as 'light' | 'dark')}>
+                {(preset) => {
+                  const isActive = () =>
+                    store.appearanceMode === 'light'
+                      ? store.lightThemeCustomId === null && store.lightThemePreset === preset.id
+                      : store.darkThemeCustomId === null && store.darkThemePreset === preset.id;
+                  return (
+                    <div style={{ position: 'relative' }}>
                       <button
                         type="button"
                         class={`settings-theme-card${isActive() ? ' active' : ''}`}
@@ -827,14 +1000,96 @@ export function SettingsDialog(props: SettingsDialogProps) {
                         <span class="settings-theme-title">{preset.label}</span>
                         <span class="settings-theme-desc">{preset.description}</span>
                       </button>
-                    );
-                  }}
-                </For>
-              </div>
+                      <button
+                        type="button"
+                        title="Clone as custom theme"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openCloneDialog(preset.id, preset.label);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          top: '4px',
+                          right: '4px',
+                          background: theme.bgElevated,
+                          border: `1px solid ${theme.border}`,
+                          'border-radius': '4px',
+                          color: theme.fgMuted,
+                          cursor: 'pointer',
+                          'font-size': '10px',
+                          padding: '2px 6px',
+                          opacity: '0',
+                          transition: 'opacity 0.15s',
+                        }}
+                        class="preset-clone-btn"
+                      >
+                        Clone
+                      </button>
+                    </div>
+                  );
+                }}
+              </For>
+              <For
+                each={Object.values(store.customThemes).filter(
+                  (ct) => detectThemeTone(ct.vars) === store.appearanceMode,
+                )}
+              >
+                {(ct) => {
+                  const isActive = () =>
+                    store.appearanceMode === 'light'
+                      ? store.lightThemeCustomId === ct.id
+                      : store.darkThemeCustomId === ct.id;
+                  return (
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        class={`settings-theme-card${isActive() ? ' active' : ''}`}
+                        onClick={() => {
+                          if (store.appearanceMode === 'light') {
+                            setLightTheme(store.lightThemePreset, ct.id);
+                          } else {
+                            setDarkTheme(store.darkThemePreset, ct.id);
+                          }
+                        }}
+                      >
+                        <span class="settings-theme-title">{ct.name}</span>
+                        <span class="settings-theme-desc">{ct.description || 'Custom theme'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        title="Edit custom theme"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCloneCss(undefined);
+                          setEditingThemeId(ct.id);
+                          setCustomThemeDialogOpen(true);
+                        }}
+                        style={{
+                          position: 'absolute',
+                          top: '4px',
+                          right: '4px',
+                          background: theme.bgElevated,
+                          border: `1px solid ${theme.border}`,
+                          'border-radius': '4px',
+                          color: theme.fgMuted,
+                          cursor: 'pointer',
+                          'font-size': '10px',
+                          padding: '2px 6px',
+                          opacity: '0',
+                          transition: 'opacity 0.15s',
+                        }}
+                        class="preset-clone-btn"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  );
+                }}
+              </For>
             </div>
           </Show>
 
-          {/* Built-in presets — dual picker (System mode) */}
+          {/* System mode: dual grids, each with built-ins + tone-matching custom themes */}
           <Show when={store.appearanceMode === 'system'}>
             <For each={['dark', 'light'] as const}>
               {(slot) => (
@@ -852,20 +1107,106 @@ export function SettingsDialog(props: SettingsDialogProps) {
                             : store.darkThemeCustomId === null &&
                               store.darkThemePreset === preset.id;
                         return (
-                          <button
-                            type="button"
-                            class={`settings-theme-card${isActive() ? ' active' : ''}`}
-                            onClick={() => {
-                              if (slot === 'light') {
-                                setLightTheme(preset.id, null);
-                              } else {
-                                setDarkTheme(preset.id, null);
-                              }
-                            }}
-                          >
-                            <span class="settings-theme-title">{preset.label}</span>
-                            <span class="settings-theme-desc">{preset.description}</span>
-                          </button>
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              type="button"
+                              class={`settings-theme-card${isActive() ? ' active' : ''}`}
+                              onClick={() => {
+                                if (slot === 'light') {
+                                  setLightTheme(preset.id, null);
+                                } else {
+                                  setDarkTheme(preset.id, null);
+                                }
+                              }}
+                            >
+                              <span class="settings-theme-title">{preset.label}</span>
+                              <span class="settings-theme-desc">{preset.description}</span>
+                            </button>
+                            <button
+                              type="button"
+                              title="Clone as custom theme"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openCloneDialog(preset.id, preset.label);
+                              }}
+                              style={{
+                                position: 'absolute',
+                                top: '4px',
+                                right: '4px',
+                                background: theme.bgElevated,
+                                border: `1px solid ${theme.border}`,
+                                'border-radius': '4px',
+                                color: theme.fgMuted,
+                                cursor: 'pointer',
+                                'font-size': '10px',
+                                padding: '2px 6px',
+                                opacity: '0',
+                                transition: 'opacity 0.15s',
+                              }}
+                              class="preset-clone-btn"
+                            >
+                              Clone
+                            </button>
+                          </div>
+                        );
+                      }}
+                    </For>
+                    <For
+                      each={Object.values(store.customThemes).filter(
+                        (ct) => detectThemeTone(ct.vars) === slot,
+                      )}
+                    >
+                      {(ct) => {
+                        const isActive = () =>
+                          slot === 'light'
+                            ? store.lightThemeCustomId === ct.id
+                            : store.darkThemeCustomId === ct.id;
+                        return (
+                          <div style={{ position: 'relative' }}>
+                            <button
+                              type="button"
+                              class={`settings-theme-card${isActive() ? ' active' : ''}`}
+                              onClick={() => {
+                                if (slot === 'light') {
+                                  setLightTheme(store.lightThemePreset, ct.id);
+                                } else {
+                                  setDarkTheme(store.darkThemePreset, ct.id);
+                                }
+                              }}
+                            >
+                              <span class="settings-theme-title">{ct.name}</span>
+                              <span class="settings-theme-desc">
+                                {ct.description || 'Custom theme'}
+                              </span>
+                            </button>
+                            <button
+                              type="button"
+                              title="Edit custom theme"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setCloneCss(undefined);
+                                setEditingThemeId(ct.id);
+                                setCustomThemeDialogOpen(true);
+                              }}
+                              style={{
+                                position: 'absolute',
+                                top: '4px',
+                                right: '4px',
+                                background: theme.bgElevated,
+                                border: `1px solid ${theme.border}`,
+                                'border-radius': '4px',
+                                color: theme.fgMuted,
+                                cursor: 'pointer',
+                                'font-size': '10px',
+                                padding: '2px 6px',
+                                opacity: '0',
+                                transition: 'opacity 0.15s',
+                              }}
+                              class="preset-clone-btn"
+                            >
+                              Edit
+                            </button>
+                          </div>
                         );
                       }}
                     </For>
@@ -874,6 +1215,105 @@ export function SettingsDialog(props: SettingsDialogProps) {
               )}
             </For>
           </Show>
+        </div>
+      </Show>
+
+      <CustomThemeDialog
+        open={customThemeDialogOpen()}
+        editId={editingThemeId()}
+        initialCss={cloneCss()}
+        onClose={() => setCustomThemeDialogOpen(false)}
+      />
+
+      <Show when={activeTab() === 'experimental'}>
+        <div
+          id="settings-tab-experimental"
+          role="tabpanel"
+          aria-labelledby="settings-tabbutton-experimental"
+          style={{ display: 'flex', 'flex-direction': 'column', gap: '18px' }}
+        >
+          <div style={{ display: 'flex', 'flex-direction': 'column', gap: '10px' }}>
+            <div style={{ ...sectionLabelStyle, 'font-weight': '600' }}>Coordinator</div>
+            <label
+              style={{
+                display: 'flex',
+                'align-items': 'center',
+                gap: '10px',
+                cursor: 'pointer',
+                padding: '8px 12px',
+                'border-radius': '8px',
+                background: theme.bgInput,
+                border: `1px solid ${theme.border}`,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={store.coordinatorModeEnabled}
+                onChange={(e) => setCoordinatorModeEnabled(e.currentTarget.checked)}
+                style={{ 'accent-color': theme.accent, cursor: 'pointer' }}
+              />
+              <div style={{ display: 'flex', 'flex-direction': 'column', gap: '2px' }}>
+                <span style={{ 'font-size': '14px', color: theme.fg }}>Coordinator mode</span>
+                <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+                  Enable the Coordinator option when creating tasks. Coordinators can spawn
+                  sub-tasks, send prompts, and merge branches automatically via MCP tools. Requires
+                  app restart to fully disable.
+                </span>
+              </div>
+            </label>
+            <div
+              style={{
+                display: 'flex',
+                'flex-direction': 'column',
+                gap: '6px',
+                padding: '8px 12px',
+                'border-radius': '8px',
+                background: theme.bgInput,
+                border: `1px solid ${theme.border}`,
+              }}
+            >
+              <label
+                style={{
+                  display: 'flex',
+                  'align-items': 'center',
+                  gap: '10px',
+                }}
+              >
+                <span style={{ 'font-size': '14px', color: theme.fg, 'white-space': 'nowrap' }}>
+                  Coordinator notification delay (seconds)
+                </span>
+                <input
+                  type="number"
+                  min="5"
+                  max="300"
+                  step="5"
+                  value={Math.round(store.coordinatorNotificationDelayMs / 1000)}
+                  onInput={(e) => {
+                    const seconds = Number(e.currentTarget.value);
+                    if (Number.isFinite(seconds)) {
+                      setCoordinatorNotificationDelayMs(seconds * 1000);
+                    }
+                  }}
+                  style={{
+                    width: '80px',
+                    background: theme.taskPanelBg,
+                    border: `1px solid ${theme.border}`,
+                    'border-radius': '6px',
+                    padding: '6px 10px',
+                    color: theme.fg,
+                    'font-size': '14px',
+                    'font-family': "'JetBrains Mono', monospace",
+                    outline: 'none',
+                    'text-align': 'right',
+                  }}
+                />
+              </label>
+              <span style={{ 'font-size': '12px', color: theme.fgSubtle }}>
+                How long the coordinator waits before firing a notification after a sub-task
+                completes. Default: 60s. Failed sub-tasks use max(10s, delay ÷ 4).
+              </span>
+            </div>
+          </div>
         </div>
       </Show>
     </Dialog>

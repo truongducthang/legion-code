@@ -2,6 +2,8 @@ rules:
   - id: token-embedded-in-url-template
     pattern: |
       `$PREFIX?token=${$TOKEN}$SUFFIX`
+    pattern-not: |
+      `$PREFIX?token=${mobileToken}$SUFFIX`
     message: |
       Token embedded directly in URL template literal. Mobile/shared URLs must use
       the mobile token, not the coordinator token. The coordinator token must never
@@ -11,8 +13,6 @@ rules:
     paths:
       include:
         - '**/electron/**'
-      exclude:
-        - '**/electron/remote/server.ts'
 
   - id: console-log-token-variable
     pattern-either:

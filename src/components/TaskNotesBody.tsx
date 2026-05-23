@@ -72,13 +72,6 @@ export function TaskNotesBody(props: TaskNotesBodyProps) {
     });
   });
 
-  // Intrinsic height the flex-first panel tree uses when the notes panel
-  // isn't pinned. Focus mode defaults to a roomy 240 px so a user who just
-  // entered focus mode sees meaningful space for notes without dragging.
-  // `max-height: 40vh` (set inline below) caps growth when the plan tab
-  // renders long markdown — otherwise its intrinsic height bubbles up the
-  // flex chain and pushes the AI-terminal absorber out of view. Same pattern
-  // as TaskChangedFilesSection and TaskStepsSection.
   const intrinsicHeight = () => (store.focusMode ? '240px' : '140px');
 
   return (
@@ -89,7 +82,6 @@ export function TaskNotesBody(props: TaskNotesBodyProps) {
         width: '100%',
         height: '100%',
         'min-height': intrinsicHeight(),
-        'max-height': '40vh',
         display: 'flex',
         'flex-direction': 'column',
       }}

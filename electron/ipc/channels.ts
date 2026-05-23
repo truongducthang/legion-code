@@ -46,6 +46,9 @@ export enum IPC {
   // Persistence
   SaveAppState = 'save_app_state',
   LoadAppState = 'load_app_state',
+  LoadCustomThemes = 'load_custom_themes',
+  SaveCustomTheme = 'save_custom_theme',
+  DeleteCustomTheme = 'delete_custom_theme',
 
   // Keybindings
   LoadKeybindings = 'load_keybindings',
@@ -137,4 +140,38 @@ export enum IPC {
 
   // Logging
   LogFromRenderer = 'log_from_renderer',
+
+  // Auto-update
+  CheckForUpdates = 'check_for_updates',
+  DownloadUpdate = 'download_update',
+  QuitAndInstallUpdate = 'quit_and_install_update',
+  GetUpdateStatus = 'get_update_status',
+  UpdateStatusChanged = 'update_status_changed',
+
+  // MCP / Coordinating agent
+  SetCoordinatorModeEnabled = 'set_coordinator_mode_enabled',
+  StartMCPServer = 'start_mcp_server',
+  StopMCPServer = 'stop_mcp_server',
+  GetMCPStatus = 'get_mcp_status',
+  GetMCPLogs = 'get_mcp_logs',
+  MCP_TaskCreated = 'mcp_task_created',
+  MCP_TaskClosed = 'mcp_task_closed',
+  MCP_TaskStateSync = 'mcp_task_state_sync',
+  MCP_ControlChanged = 'mcp_control_changed',
+  // Coordinator notifications (main → renderer)
+  MCP_CoordinatorNotificationStaged = 'mcp_coordinator_notification_staged',
+  MCP_CoordinatorNotificationCleared = 'mcp_coordinator_notification_cleared',
+  MCP_CoordinatorOrphanedNotification = 'mcp_coordinator_orphaned_notification',
+  // Coordinator lifecycle (renderer → main)
+  MCP_CoordinatorRegistered = 'mcp_coordinator_registered',
+  MCP_CoordinatorDeregistered = 'mcp_coordinator_deregistered',
+  MCP_CoordinatorNotificationAck = 'mcp_coordinator_notification_ack',
+  MCP_CoordinatorNotificationDropAck = 'mcp_coordinator_notification_drop_ack',
+  MCP_CoordinatedTaskPromptDelivered = 'mcp_coordinated_task_prompt_delivered',
+  MCP_CoordinatorRestageAfterUserSend = 'mcp_coordinator_restage_after_user_send',
+  MCP_HydrateCoordinatedTask = 'mcp_hydrate_coordinated_task',
+  MCP_TaskHydrated = 'mcp_task_hydrated',
+  MCP_StaleUrlWarning = 'mcp_stale_url_warning',
+  MCP_CoordinatedTaskClosed = 'mcp_coordinated_task_closed',
+  MCP_TaskCleanupFailed = 'mcp_task_cleanup_failed',
 }

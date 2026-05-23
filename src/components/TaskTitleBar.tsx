@@ -101,6 +101,14 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
         <Show when={props.task.externalWorktree}>
           <span style={badgeStyle(theme.accent)}>Imported</span>
         </Show>
+        <Show when={props.task.needsReview}>
+          <span
+            style={badgeStyle(theme.warning)}
+            title="Coordinator closed — review this branch manually"
+          >
+            Review
+          </span>
+        </Show>
         <EditableText
           value={titleLabel()}
           onCommit={(v) => updateTaskName(props.task.id, v)}
@@ -191,15 +199,17 @@ export function TaskTitleBar(props: TaskTitleBarProps) {
           }}
           title={store.focusMode ? 'Exit focus mode' : 'Focus on this task'}
         />
-        <IconButton
-          icon={
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M2 8a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 8Z" />
-            </svg>
-          }
-          onClick={() => collapseTask(props.task.id)}
-          title="Collapse task"
-        />
+        <Show when={!props.task.coordinatorMode}>
+          <IconButton
+            icon={
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M2 8a.75.75 0 0 1 .75-.75h10.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 8Z" />
+              </svg>
+            }
+            onClick={() => collapseTask(props.task.id)}
+            title="Collapse task"
+          />
+        </Show>
         <IconButton
           icon={
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">

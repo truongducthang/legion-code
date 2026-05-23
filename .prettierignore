@@ -5,6 +5,8 @@ release/
 node_modules/
 .worktrees/
 .claude/
+.remember/
+.parallel-code/
 .enzyme/
 .omc/
 .planning/

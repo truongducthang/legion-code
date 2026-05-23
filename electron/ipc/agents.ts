@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
+import path from 'path';
 
 const execFileAsync = promisify(execFile);
 
@@ -80,6 +81,12 @@ async function isCommandAvailable(command: string): Promise<boolean> {
 let cachedAgents: AgentDef[] | null = null;
 let cacheTime = 0;
 const AGENT_CACHE_TTL = 30_000;
+
+export function getSkipPermissionsArgs(command: string): string[] {
+  const base = path.basename(command);
+  const agent = DEFAULT_AGENTS.find((a) => a.command === base || a.command === command);
+  return agent ? [...agent.skip_permissions_args] : [];
+}
 
 export async function listAgents(): Promise<AgentDef[]> {
   const now = Date.now();

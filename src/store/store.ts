@@ -42,6 +42,7 @@ export {
   clearPrefillPrompt,
   setPrefillPrompt,
   reorderTask,
+  reorderTaskVisually,
   spawnShellForTask,
   runBookmarkInTask,
   closeShell,
@@ -55,6 +56,14 @@ export {
   setStepsContent,
   setTaskStepsEnabled,
   setTaskLastInputAt,
+  initMCPListeners,
+  getCoordinatorCloseWarning,
+  setTaskControl,
+  markTaskMcpPending,
+  markTaskMcpReady,
+  setTaskMcpLaunchArgs,
+  markTaskMcpError,
+  retryTaskMcpStartup,
 } from './tasks';
 export {
   setActiveTask,
@@ -89,7 +98,7 @@ export {
   setSidebarFocusedProjectId,
 } from './focus';
 export type { PanelId, PendingAction, TaskViewportVisibility } from './types';
-export { saveState, loadState } from './persistence';
+export { saveState, loadState, loadCustomThemes } from './persistence';
 export {
   getGlobalScale,
   adjustGlobalScale,
@@ -107,17 +116,23 @@ export {
   setTerminalFont,
   setThemePreset,
   applyAppearanceMode,
+  markCustomThemesReady,
   setAppearanceMode,
   setLightTheme,
   setDarkTheme,
+  saveCustomTheme,
+  deleteCustomTheme,
+  activateCustomTheme,
   setAutoTrustFolders,
   setShowPlans,
   setShowPromptInput,
   setShowSidebarTips,
   setShowSidebarProgress,
+  setProjectsCollapsed,
   setFontSmoothing,
   setDesktopNotificationsEnabled,
   setVerboseLogging,
+  setCoordinatorNotificationDelayMs,
   setInactiveColumnOpacity,
   setEditorCommand,
   setDockerImage,
@@ -126,6 +141,7 @@ export {
   setAskCodeProvider,
   setMinimaxApiKey,
   setWindowState,
+  setCoordinatorModeEnabled,
 } from './ui';
 export {
   getTaskDotStatus,
@@ -160,6 +176,13 @@ export {
 } from './terminals';
 export { startRemoteAccess, stopRemoteAccess, refreshRemoteStatus } from './remote';
 export {
+  updateStatus,
+  startUpdateSubscription,
+  checkForUpdates,
+  downloadUpdate,
+  installUpdate,
+} from './updates';
+export {
   resolvedBindings,
   allBindings,
   loadKeybindings,
@@ -170,3 +193,9 @@ export {
   checkConflict,
   dismissMigrationBanner,
 } from './keybindings';
+export {
+  hasAnyCoordinatorTask,
+  refreshMCPStatus,
+  startMCPStatusPolling,
+  stopMCPStatusPolling,
+} from './mcpStatus';

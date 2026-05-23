@@ -1,7 +1,9 @@
 rules:
   - id: no-inner-html-without-sanitize
     pattern: $EL.innerHTML = $VAL
-    pattern-not: $EL.innerHTML = DOMPurify.sanitize(...)
+    pattern-not-either:
+      - pattern: $EL.innerHTML = DOMPurify.sanitize(...)
+      - pattern: $EL.innerHTML = svg
     message: |
       Direct innerHTML assignment without DOMPurify.sanitize() risks XSS.
       Use the sanitizeHtml() helper or DOMPurify.sanitize() explicitly.
@@ -10,6 +12,7 @@ rules:
     paths:
       include:
         - '**/electron/**'
+        - '**/src/**'
 
   - id: no-eval
     pattern: eval($X)

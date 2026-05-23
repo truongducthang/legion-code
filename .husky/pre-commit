@@ -1,3 +1,18 @@
 #!/bin/sh
 npx lint-staged
 npm run check
+
+# Verify package-lock.json is committed and in sync with package.json
+if git diff --cached --name-only | grep -q "package\.json$"; then
+  if ! git diff --cached --name-only | grep -q "package-lock\.json$"; then
+    echo "Error: package.json changed without updating package-lock.json"
+    echo "Run 'npm install' to update the lockfile"
+    exit 1
+  fi
+fi
+
+# Ensure package-lock.json is not gitignored (supply chain: lockfile must be tracked)
+if git check-ignore -q package-lock.json 2>/dev/null; then
+  echo "Error: package-lock.json must not be gitignored — it provides integrity hashes"
+  exit 1
+fi

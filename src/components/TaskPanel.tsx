@@ -12,11 +12,14 @@ import {
   clearPendingAction,
   showNotification,
   setTaskSplitMode,
+  setTaskControl,
+  saveState,
 } from '../store/store';
+import { setStore } from '../store/core';
 import { useFocusRegistration } from '../lib/focus-registration';
 import { ResizablePanel, type PanelChild } from './ResizablePanel';
 import type { EditableTextHandle } from './EditableText';
-import { PromptInput } from './PromptInput';
+import { PromptInput, type PromptInputHandle } from './PromptInput';
 import { CloseTaskDialog } from './CloseTaskDialog';
 import { MergeDialog } from './MergeDialog';
 import { PushDialog } from './PushDialog';
@@ -34,7 +37,9 @@ import { TaskAITerminal } from './TaskAITerminal';
 import { TaskClosingOverlay } from './TaskClosingOverlay';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
+import { SubTaskStrip } from './SubTaskStrip';
 import { theme } from '../lib/theme';
+import { isMac } from '../lib/platform';
 import type { Task } from '../store/types';
 import type { CommitInfo } from '../ipc/types';
 
@@ -43,12 +48,31 @@ interface TaskPanelProps {
   isActive: boolean;
 }
 
-const STEPS_PANEL_AUTO_MAX_PX = 240;
-const CHANGED_FILES_PANEL_AUTO_MAX_PX = 300;
+// Panels that auto-grow to their content share one ceiling so a long body
+// can't take over the column: never taller than the panel's own px cap, and
+// never taller than 33vh. User drag pins intentionally bypass this.
+const STEPS_PANEL_AUTO_MAX = 'min(240px, 33vh)';
+const CHANGED_FILES_PANEL_AUTO_MAX = 'min(300px, 33vh)';
+const NOTES_PANEL_AUTO_MAX = 'min(400px, 33vh)';
 
 export function TaskPanel(props: TaskPanelProps) {
   const [showCloseConfirm, setShowCloseConfirm] = createSignal(false);
   const [planFullscreen, setPlanFullscreen] = createSignal(false);
+
+  // Countdown clock for staged coordinator notifications shown while auto mode is active.
+  const [nowMs, setNowMs] = createSignal(Date.now());
+  createEffect(() => {
+    const n = props.task.stagedNotification;
+    if (!n || n.userEdited) return;
+    const id = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    onCleanup(() => clearInterval(id));
+  });
+  const stagedCountdown = () => {
+    const n = props.task.stagedNotification;
+    if (!n || n.userEdited) return null;
+    const remaining = Math.ceil((n.autoFireAt - nowMs()) / 1_000);
+    return remaining > 0 ? `Auto-sending in ${remaining}s` : 'Sending when ready…';
+  };
 
   const [showMergeConfirm, setShowMergeConfirm] = createSignal(false);
   const [showPushConfirm, setShowPushConfirm] = createSignal(false);
@@ -69,6 +93,20 @@ export function TaskPanel(props: TaskPanelProps) {
   let panelRef!: HTMLDivElement;
   let promptRef: HTMLTextAreaElement | undefined;
   let titleEditHandle: EditableTextHandle | undefined;
+  let promptHandle: PromptInputHandle | undefined;
+
+  // Discoverability hint for coordinator control mode
+  const [showControlHint, setShowControlHint] = createSignal(false);
+  let controlHintTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(controlHintTimer));
+  function maybeShowControlHint() {
+    if (!props.task.coordinatorMode) return;
+    if (props.task.controlledBy === 'human') return;
+    if (store.coordinatorControlHintDismissed) return;
+    setShowControlHint(true);
+    clearTimeout(controlHintTimer);
+    controlHintTimer = setTimeout(() => setShowControlHint(false), 4_000);
+  }
 
   // Two-column focus-mode layout kicks in once the task panel is wide enough.
   // Hysteresis: enter at >=1200, leave at <1150. A single threshold flickers
@@ -205,6 +243,8 @@ export function TaskPanel(props: TaskPanelProps) {
     });
   });
 
+  const firstAgentId = () => props.task.agentIds[0] ?? '';
+
   const selectedAgentId = () => {
     const active = store.activeAgentId;
     if (props.isActive && active && props.task.agentIds.includes(active)) return active;
@@ -213,7 +253,6 @@ export function TaskPanel(props: TaskPanelProps) {
     }
     return props.task.agentIds[0] ?? '';
   };
-  const initialPromptAgentId = () => props.task.agentIds[0] ?? '';
 
   // Heavy components are created once and reused in both stack and split
   // layouts. Solid owns their reactive scope under TaskPanel (not under the
@@ -221,21 +260,41 @@ export function TaskPanel(props: TaskPanelProps) {
   // reparented instead of destroyed+recreated. That avoids the expensive
   // xterm.js teardown/reinit and scrollback replay on every layout flip.
   const aiTerminalEl = (
-    <TaskAITerminal
-      task={props.task}
-      isActive={props.isActive}
-      selectedAgentId={selectedAgentId()}
-      onSelectAgent={setActiveAgent}
-      onStepJumpReady={(fn, fromIdx) => {
-        setStepNav(fn ? { jump: fn, firstIndex: fromIdx } : undefined);
-      }}
-    />
+    <div style={{ position: 'relative', height: '100%' }}>
+      <TaskAITerminal
+        task={props.task}
+        isActive={props.isActive}
+        selectedAgentId={selectedAgentId()}
+        onSelectAgent={setActiveAgent}
+        promptHandle={promptHandle}
+        onStepJumpReady={(fn, fromIdx) => {
+          setStepNav(fn ? { jump: fn, firstIndex: fromIdx } : undefined);
+        }}
+      />
+      <Show
+        when={
+          (!!props.task.coordinatedBy || !!props.task.coordinatorMode) &&
+          props.task.controlledBy !== 'human'
+        }
+      >
+        <div
+          style={{
+            position: 'absolute',
+            inset: '0',
+            'pointer-events': 'all',
+            cursor: 'not-allowed',
+            opacity: props.task.coordinatedBy ? '0.3' : '0',
+            background: theme.taskPanelBg,
+          }}
+        />
+      </Show>
+    </div>
   );
   const shellSectionEl = <TaskShellSection task={props.task} isActive={props.isActive} />;
   const notesBodyEl = (
     <TaskNotesBody
       task={props.task}
-      agentId={selectedAgentId()}
+      agentId={firstAgentId()}
       onPlanFullscreen={() => setPlanFullscreen(true)}
     />
   );
@@ -268,24 +327,34 @@ export function TaskPanel(props: TaskPanelProps) {
   );
   // Prompt wrapper carries its own intrinsic height so the flex-first panel
   // tree sizes it to 72 px by default and lets a user-drag pin override.
+  // In coordinator auto mode the wrapper is hidden (display:none) but PromptInput
+  // stays mounted so its autofire interval keeps running.
+  const isCoordAutoMode = () => props.task.coordinatorMode && props.task.controlledBy !== 'human';
   const promptInputEl = (
     <div
       onClick={() => setTaskFocusedPanel(props.task.id, 'prompt')}
-      style={{ height: '100%', 'min-height': '72px' }}
+      style={{
+        height: '100%',
+        'min-height': '72px',
+        display: isCoordAutoMode() ? 'none' : undefined,
+      }}
     >
       <PromptInput
         taskId={props.task.id}
-        agentId={selectedAgentId()}
+        agentId={firstAgentId()}
+        coordinatedBy={props.task.coordinatedBy}
+        coordinatorMode={props.task.coordinatorMode}
+        controlledBy={props.task.controlledBy}
+        stagedNotification={props.task.stagedNotification}
+        nowMs={nowMs}
         initialPrompt={props.task.initialPrompt}
-        initialPromptAgentId={initialPromptAgentId()}
         prefillPrompt={props.task.prefillPrompt}
-        onSend={(_text, agentId) => {
-          if (props.task.initialPrompt && agentId === initialPromptAgentId()) {
-            clearInitialPrompt(props.task.id);
-          }
+        onSend={() => {
+          if (props.task.initialPrompt) clearInitialPrompt(props.task.id);
         }}
         onPrefillConsumed={() => clearPrefillPrompt(props.task.id)}
         ref={(el) => (promptRef = el)}
+        handle={(h) => (promptHandle = h)}
       />
     </div>
   );
@@ -297,7 +366,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const stepsSectionChild: PanelChild = {
     id: 'steps-section',
     minSize: 28,
-    maxAutoSize: STEPS_PANEL_AUTO_MAX_PX,
+    maxAutoSize: STEPS_PANEL_AUTO_MAX,
     content: () => stepsSectionEl,
   };
 
@@ -319,7 +388,11 @@ export function TaskPanel(props: TaskPanelProps) {
 
   const promptInputChild: PanelChild = {
     id: 'prompt',
-    minSize: 54,
+    // Drops to 0 in coordinator auto mode so the layout doesn't reserve space.
+    // PromptInput stays mounted (display:none above) so autofire keeps running.
+    get minSize() {
+      return isCoordAutoMode() ? 0 : 54;
+    },
     content: () => promptInputEl,
   };
 
@@ -331,13 +404,14 @@ export function TaskPanel(props: TaskPanelProps) {
   const notesChild: PanelChild = {
     id: 'notes',
     minSize: 100,
+    maxAutoSize: NOTES_PANEL_AUTO_MAX,
     content: () => notesBodyEl,
   };
 
   const changedFilesChild: PanelChild = {
     id: 'changed-files',
     minSize: 100,
-    maxAutoSize: CHANGED_FILES_PANEL_AUTO_MAX_PX,
+    maxAutoSize: CHANGED_FILES_PANEL_AUTO_MAX,
     content: () => changedFilesEl,
   };
 
@@ -347,6 +421,7 @@ export function TaskPanel(props: TaskPanelProps) {
   const notesAndFilesChild: PanelChild = {
     id: 'notes-files',
     minSize: 60,
+    absorberWeight: 0.5,
     content: () => (
       <div style={{ height: '100%', 'min-height': '200px' }}>
         {isNoneGit() ? (
@@ -377,13 +452,203 @@ export function TaskPanel(props: TaskPanelProps) {
         overflow: 'clip',
         position: 'relative',
       }}
-      onClick={() => setActiveTask(props.task.id)}
+      onClick={() => {
+        setActiveTask(props.task.id);
+        maybeShowControlHint();
+      }}
     >
       <TaskClosingOverlay
         closingStatus={props.task.closingStatus}
         closingError={props.task.closingError}
         onRetry={() => retryCloseTask(props.task.id)}
       />
+      <Show when={!!props.task.coordinatedBy || !!props.task.coordinatorMode}>
+        <Show
+          when={props.task.controlledBy === 'human'}
+          fallback={
+            <div
+              style={{
+                background: theme.bgElevated,
+                'border-bottom': `1px solid ${theme.border}`,
+                'font-size': '12px',
+                color: theme.fgMuted,
+              }}
+            >
+              <div
+                style={{
+                  padding: '6px 12px',
+                  display: 'flex',
+                  'align-items': 'center',
+                  'justify-content': 'space-between',
+                }}
+              >
+                <span>{props.task.coordinatorMode ? 'Auto mode' : 'Coordinator driving'}</span>
+                <button
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    'font-size': '12px',
+                    color: theme.accent,
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setTaskControl(props.task.id, 'human');
+                  }}
+                >
+                  Take Control
+                </button>
+              </div>
+              <Show
+                when={!!props.task.stagedNotification && !props.task.stagedNotification.userEdited}
+              >
+                <div
+                  style={{
+                    'border-top': `1px solid ${theme.border}`,
+                    padding: '6px 12px',
+                    background: `${theme.accent}11`,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      'align-items': 'center',
+                      'justify-content': 'space-between',
+                      'margin-bottom': '4px',
+                    }}
+                  >
+                    <span style={{ color: theme.accent, 'font-size': '11px' }}>
+                      Staged for auto-send
+                    </span>
+                    <span style={{ 'font-size': '11px', color: theme.fgSubtle }}>
+                      {stagedCountdown()}
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      'white-space': 'pre-wrap',
+                      'word-break': 'break-word',
+                      'max-height': '80px',
+                      overflow: 'hidden',
+                      color: theme.fg,
+                      'font-size': '11px',
+                      opacity: '0.85',
+                    }}
+                  >
+                    {props.task.stagedNotification?.text}
+                  </div>
+                </div>
+              </Show>
+            </div>
+          }
+        >
+          <div
+            style={{
+              background: theme.warning,
+              padding: '6px 12px',
+              'font-size': '12px',
+              display: 'flex',
+              'align-items': 'center',
+              'justify-content': 'space-between',
+              color: 'rgba(0,0,0,0.85)',
+            }}
+          >
+            <span>You have control</span>
+            <button
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                'font-size': '12px',
+                color: 'rgba(0,0,0,0.75)',
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setTaskControl(props.task.id, 'coordinator');
+              }}
+            >
+              Release Control
+            </button>
+          </div>
+        </Show>
+        <Show when={props.task.coordinatorMode && props.task.dockerMode && isMac}>
+          <div
+            style={{
+              'border-bottom': `1px solid ${theme.border}`,
+              background: `color-mix(in srgb, ${theme.warning} 8%, transparent)`,
+              padding: '4px 12px',
+              'font-size': '11px',
+              color: theme.warning,
+            }}
+          >
+            MCP server bound to all interfaces (macOS + Docker) — port reachable on local network
+          </div>
+        </Show>
+      </Show>
+      <Show when={showControlHint()}>
+        <div
+          style={{
+            position: 'absolute',
+            top: '48px',
+            right: '12px',
+            'z-index': '100',
+            background: theme.bgElevated,
+            border: `1px solid ${theme.accent}`,
+            'border-radius': '8px',
+            padding: '10px 12px',
+            'font-size': '12px',
+            color: theme.fg,
+            'max-width': '260px',
+            'box-shadow': '0 4px 12px rgba(0,0,0,0.3)',
+          }}
+        >
+          <div style={{ 'margin-bottom': '8px', 'line-height': '1.4' }}>
+            Autofire is active — click <strong>Take Control</strong> to type freely.
+          </div>
+          <div style={{ display: 'flex', 'align-items': 'center', gap: '8px' }}>
+            <label
+              style={{
+                display: 'flex',
+                'align-items': 'center',
+                gap: '4px',
+                cursor: 'pointer',
+                'font-size': '11px',
+                color: theme.fgMuted,
+              }}
+            >
+              <input
+                type="checkbox"
+                onChange={(e) => {
+                  if (e.currentTarget.checked) {
+                    setStore('coordinatorControlHintDismissed', true);
+                    void saveState();
+                    setShowControlHint(false);
+                  }
+                }}
+              />
+              Don't show again
+            </label>
+            <button
+              style={{
+                'margin-left': 'auto',
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                'font-size': '14px',
+                color: theme.fgMuted,
+                padding: '0 2px',
+                'line-height': '1',
+              }}
+              onClick={() => setShowControlHint(false)}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      </Show>
+      <Show when={props.task.coordinatorMode}>
+        <SubTaskStrip coordinatorTaskId={props.task.id} />
+      </Show>
       <div
         class="task-header-stack"
         style={{
@@ -417,13 +682,13 @@ export function TaskPanel(props: TaskPanelProps) {
             <ResizablePanel
               direction="vertical"
               persistKey={`task:${props.task.id}`}
-              absorberIds={['ai-terminal']}
+              absorberIds={['notes-files', 'ai-terminal']}
               children={[
                 notesAndFilesChild,
                 shellSectionChild,
                 aiTerminalChild,
                 ...(props.task.stepsEnabled ? [stepsSectionChild] : []),
-                ...(store.showPromptInput ? [promptInputChild] : []),
+                ...(store.showPromptInput || props.task.coordinatorMode ? [promptInputChild] : []),
               ]}
             />
           }
@@ -443,7 +708,9 @@ export function TaskPanel(props: TaskPanelProps) {
                     absorberIds={['ai-terminal']}
                     children={[
                       aiTerminalChild,
-                      ...(store.showPromptInput ? [promptInputChild] : []),
+                      ...(store.showPromptInput || props.task.coordinatorMode
+                        ? [promptInputChild]
+                        : []),
                     ]}
                   />
                 ),
@@ -521,7 +788,7 @@ export function TaskPanel(props: TaskPanelProps) {
           baseBranch={props.task.baseBranch}
           onClose={() => setDiffScrollTarget(null)}
           taskId={props.task.id}
-          agentId={selectedAgentId()}
+          agentId={props.task.agentIds[0]}
           commitList={commitList()}
           selectedCommit={selectedCommit()}
           onCommitNavigate={setSelectedCommit}
@@ -535,7 +802,7 @@ export function TaskPanel(props: TaskPanelProps) {
         planContent={props.task.planContent ?? ''}
         planFileName={props.task.planFileName ?? 'plan.md'}
         taskId={props.task.id}
-        agentId={selectedAgentId()}
+        agentId={props.task.agentIds[0]}
         worktreePath={props.task.worktreePath}
       />
     </div>

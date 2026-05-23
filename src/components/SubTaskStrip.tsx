@@ -1,0 +1,278 @@
+import { For, Show, createMemo, createSignal, onMount } from 'solid-js';
+import { store, setActiveTask, getTaskDotStatus, uncollapseTask } from '../store/store';
+import { getCoordinatorChildren } from '../store/sidebar-order';
+import { invoke } from '../lib/ipc';
+import { IPC } from '../../electron/ipc/channels';
+import { StatusDot } from './StatusDot';
+import { theme } from '../lib/theme';
+import { sf } from '../lib/fontScale';
+
+interface SubTaskStripProps {
+  coordinatorTaskId: string;
+}
+
+interface MCPLogEntry {
+  level: 'info' | 'error';
+  msg: string;
+  ts: number;
+}
+
+function MCPLogModal(props: { onClose: () => void }) {
+  const [logs, setLogs] = createSignal<MCPLogEntry[]>([]);
+  const [loading, setLoading] = createSignal(true);
+
+  onMount(() => {
+    void invoke<MCPLogEntry[]>(IPC.GetMCPLogs).then((entries) => {
+      setLogs(entries);
+      setLoading(false);
+    });
+  });
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: '0',
+        background: 'rgba(0,0,0,0.6)',
+        display: 'flex',
+        'align-items': 'center',
+        'justify-content': 'center',
+        'z-index': '1000',
+      }}
+      onClick={() => props.onClose()}
+    >
+      <div
+        style={{
+          background: theme.bgElevated,
+          border: `1px solid ${theme.border}`,
+          'border-radius': '8px',
+          padding: '16px',
+          width: '680px',
+          'max-height': '60vh',
+          display: 'flex',
+          'flex-direction': 'column',
+          gap: '8px',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          style={{ display: 'flex', 'justify-content': 'space-between', 'align-items': 'center' }}
+        >
+          <span style={{ 'font-size': sf(12), 'font-weight': '600', color: theme.fg }}>
+            MCP Logs
+          </span>
+          <button
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: theme.fgSubtle,
+              'font-size': sf(14),
+            }}
+            onClick={() => props.onClose()}
+          >
+            ✕
+          </button>
+        </div>
+        <div
+          style={{
+            'overflow-y': 'auto',
+            'font-family': "'JetBrains Mono', monospace",
+            'font-size': sf(11),
+            background: theme.bgInput,
+            'border-radius': '4px',
+            padding: '8px',
+            flex: '1',
+            'min-height': '0',
+          }}
+        >
+          <Show
+            when={!loading()}
+            fallback={<span style={{ color: theme.fgSubtle }}>Loading…</span>}
+          >
+            <Show
+              when={logs().length > 0}
+              fallback={<span style={{ color: theme.fgSubtle }}>No MCP log entries yet.</span>}
+            >
+              <For each={logs()}>
+                {(entry) => (
+                  <div
+                    style={{
+                      color: entry.level === 'error' ? '#f87171' : theme.fgMuted,
+                      'margin-bottom': '2px',
+                    }}
+                  >
+                    <span style={{ color: theme.fgSubtle }}>
+                      {new Date(entry.ts).toLocaleTimeString()}{' '}
+                    </span>
+                    <span style={{ color: entry.level === 'error' ? '#f87171' : theme.fg }}>
+                      [{entry.level}]{' '}
+                    </span>
+                    {entry.msg}
+                  </div>
+                )}
+              </For>
+            </Show>
+          </Show>
+        </div>
+        <div style={{ 'font-size': sf(10), color: theme.fgSubtle }}>
+          Showing last 200 entries. Refresh to reload.
+          <button
+            style={{
+              'margin-left': '8px',
+              background: 'none',
+              border: `1px solid ${theme.border}`,
+              cursor: 'pointer',
+              color: theme.fgMuted,
+              'font-size': sf(10),
+              'border-radius': '3px',
+              padding: '1px 6px',
+            }}
+            onClick={() => {
+              setLoading(true);
+              void invoke<MCPLogEntry[]>(IPC.GetMCPLogs).then((entries) => {
+                setLogs(entries);
+                setLoading(false);
+              });
+            }}
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SubTaskStrip(props: SubTaskStripProps) {
+  const [showLogs, setShowLogs] = createSignal(false);
+
+  const subTasks = createMemo(() => {
+    const { active, collapsed } = getCoordinatorChildren(props.coordinatorTaskId);
+    return [...active, ...collapsed].map((id) => store.tasks[id]).filter(Boolean);
+  });
+
+  return (
+    <>
+      <Show when={showLogs()}>
+        <MCPLogModal onClose={() => setShowLogs(false)} />
+      </Show>
+      <Show when={subTasks().length > 0}>
+        <div
+          style={{
+            display: 'flex',
+            'align-items': 'center',
+            gap: '6px',
+            padding: '4px 10px',
+            background: theme.bgInput,
+            'border-bottom': `1px solid ${theme.border}`,
+            'overflow-x': 'auto',
+            'flex-shrink': '0',
+          }}
+        >
+          <span
+            style={{
+              'font-size': sf(10),
+              color: theme.fgSubtle,
+              'white-space': 'nowrap',
+              'flex-shrink': '0',
+            }}
+          >
+            Sub-tasks:
+          </span>
+          <For each={subTasks()}>
+            {(task) => (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (task.collapsed) {
+                    uncollapseTask(task.id);
+                  }
+                  setActiveTask(task.id);
+                }}
+                title={task.signalDoneReceived ? `${task.name} — signalled done` : task.name}
+                style={{
+                  display: 'inline-flex',
+                  'align-items': 'center',
+                  gap: '4px',
+                  padding: '2px 8px',
+                  'border-radius': '10px',
+                  background: task.signalDoneReceived
+                    ? `color-mix(in srgb, #22c55e 12%, transparent)`
+                    : `color-mix(in srgb, ${theme.fgSubtle} 8%, transparent)`,
+                  border: `1px solid ${task.signalDoneReceived ? '#22c55e44' : theme.border}`,
+                  color: theme.fgMuted,
+                  'font-size': sf(11),
+                  'font-family': "'JetBrains Mono', monospace",
+                  cursor: 'pointer',
+                  'white-space': 'nowrap',
+                  'max-width': '160px',
+                  overflow: 'hidden',
+                  'text-overflow': 'ellipsis',
+                  'flex-shrink': '0',
+                }}
+              >
+                <Show
+                  when={task.signalDoneReceived}
+                  fallback={<StatusDot status={getTaskDotStatus(task.id)} size="sm" />}
+                >
+                  <span style={{ color: '#22c55e', 'font-size': sf(10) }}>✓</span>
+                </Show>
+                <span style={{ overflow: 'hidden', 'text-overflow': 'ellipsis' }}>{task.name}</span>
+              </button>
+            )}
+          </For>
+          <Show when={store.verboseLogging}>
+            <button
+              onClick={() => setShowLogs(true)}
+              title="View MCP logs"
+              style={{
+                'margin-left': 'auto',
+                'flex-shrink': '0',
+                background: 'none',
+                border: `1px solid ${theme.border}`,
+                'border-radius': '6px',
+                cursor: 'pointer',
+                color: theme.fgSubtle,
+                'font-size': sf(10),
+                padding: '1px 6px',
+                'white-space': 'nowrap',
+              }}
+            >
+              MCP logs
+            </button>
+          </Show>
+        </div>
+      </Show>
+      <Show when={subTasks().length === 0 && store.verboseLogging}>
+        <div
+          style={{
+            display: 'flex',
+            'justify-content': 'flex-end',
+            padding: '3px 10px',
+            background: theme.bgInput,
+            'border-bottom': `1px solid ${theme.border}`,
+            'flex-shrink': '0',
+          }}
+        >
+          <button
+            onClick={() => setShowLogs(true)}
+            title="View MCP logs"
+            style={{
+              background: 'none',
+              border: `1px solid ${theme.border}`,
+              'border-radius': '6px',
+              cursor: 'pointer',
+              color: theme.fgSubtle,
+              'font-size': sf(10),
+              padding: '1px 6px',
+              'white-space': 'nowrap',
+            }}
+          >
+            MCP logs
+          </button>
+        </div>
+      </Show>
+    </>
+  );
+}

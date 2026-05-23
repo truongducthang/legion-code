@@ -51,6 +51,7 @@ export const [store, setStore] = createStore<AppStore>({
   showSteps: false,
   showSidebarTips: true,
   showSidebarProgress: true,
+  projectsCollapsed: false,
   desktopNotificationsEnabled: false,
   inactiveColumnOpacity: 0.6,
   editorCommand: '',
@@ -77,6 +78,12 @@ export const [store, setStore] = createStore<AppStore>({
   focusMode: false,
   taskSplitMode: {},
   verboseLogging: false,
+  coordinatorModeEnabled: false,
+  coordinatorNotificationDelayMs: 60_000,
+  coordinatorControlHintDismissed: false,
+  customThemes: {},
+  activeCustomThemeId: null,
+  mcpStatus: { running: false, port: null, coordinatorTaskId: null, mcpConfigPath: null },
 });
 
 type CleanupPanelStore = Pick<

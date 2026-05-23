@@ -60,6 +60,7 @@ import {
   getUncommittedChangedFiles,
   checkMergeStatus,
   listImportableWorktrees,
+  mergeTask,
 } from './git.js';
 
 type ExecFileCallback = (err: Error | null, stdout: string, stderr: string) => void;
@@ -1497,5 +1498,84 @@ describe('checkMergeStatus (cherry-pick filtered ahead count)', () => {
     expect(mergeTreeCall).toContain('HEAD');
     expect(mergeTreeCall).toContain('main');
     expect(result.conflicting_files).toEqual(['src/foo.ts', 'src/bar.ts']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// mergeTask — mergeWorktreePath skips checkout and routes ops to that path
+// ---------------------------------------------------------------------------
+
+describe('mergeTask (mergeWorktreePath)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('skips git checkout and routes status/merge ops through mergeWorktreePath', async () => {
+    type CallRecord = { args: string[]; cwd: string | undefined };
+    const callRecords: CallRecord[] = [];
+
+    vi.mocked(execFile).mockImplementation(((
+      _cmd: string,
+      args: string[],
+      opts: unknown,
+      cb: ExecFileCallback,
+    ) => {
+      callRecords.push({ args, cwd: (opts as { cwd?: string } | null)?.cwd });
+
+      const [cmd] = args;
+      // Repo lock key
+      if (cmd === 'rev-parse' && args.includes('--git-common-dir')) return cb(null, '.git\n', '');
+      // localBranchExists('main') → true; all other --verify refs → false
+      if (cmd === 'rev-parse' && args[1] === '--verify' && args[2] === 'refs/heads/main')
+        return cb(null, 'sha\n', '');
+      if (cmd === 'rev-parse' && args[1] === '--verify') return cb(new Error('no ref'), '', '');
+      // No remote HEAD
+      if (cmd === 'symbolic-ref') return cb(new Error('no remote'), '', '');
+      // merge-base for diff-base detection
+      if (cmd === 'merge-base') return cb(null, 'mergebase000\n', '');
+      // cherry-pick unique-commit list — empty means fully merged (→ no rev-list call)
+      if (cmd === 'log' && args.includes('--cherry-pick')) return cb(null, '', '');
+      // diff stats
+      if (cmd === 'diff') return cb(null, '', '');
+      // status --porcelain — clean working tree
+      if (cmd === 'status') return cb(null, '', '');
+      // merge
+      if (cmd === 'merge') return cb(null, '', '');
+      return cb(null, '', '');
+    }) as unknown as typeof execFile);
+
+    const projectRoot = uniqueRepoPath();
+    const mergeWorktreePath = uniqueRepoPath();
+    const branchName = 'feature/test-branch';
+
+    await mergeTask(
+      projectRoot,
+      branchName,
+      false, // squash
+      null, // message
+      false, // cleanup
+      'main', // baseBranch
+      undefined,
+      mergeWorktreePath,
+    );
+
+    // git checkout must never be called when mergeWorktreePath is supplied
+    expect(callRecords.some((r) => r.args[0] === 'checkout')).toBe(false);
+
+    // git merge must be called, and every such call must use mergeWorktreePath as cwd
+    const mergeCalls = callRecords.filter((r) => r.args[0] === 'merge');
+    expect(mergeCalls.length).toBeGreaterThan(0);
+    for (const r of mergeCalls) {
+      expect(r.cwd).toBe(mergeWorktreePath);
+    }
+
+    // git status --porcelain must be called with mergeWorktreePath as cwd
+    const statusCalls = callRecords.filter(
+      (r) => r.args[0] === 'status' && r.args.includes('--porcelain'),
+    );
+    expect(statusCalls.length).toBeGreaterThan(0);
+    for (const r of statusCalls) {
+      expect(r.cwd).toBe(mergeWorktreePath);
+    }
   });
 });
