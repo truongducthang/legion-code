@@ -7,7 +7,7 @@
  *   2. Runtime check — `voice.runtime === 'none'` short-circuits with a
  *      "voice disabled" reply.
  *   3. `getFile(file_id)` → stream-download the OGG/opus payload to a
- *      per-message temp file under `<os.tmpdir>/parallel-code-telegram-voice/`.
+ *      per-message temp file under `<os.tmpdir>/legion-telegram-voice/`.
  *   4. Transcribe via whisper.cpp or OpenAI Whisper API.
  *   5. Resolve the target agent in this order:
  *      reply-chain (via notifier.replyMap) → focused agent → error reply.
@@ -37,7 +37,7 @@ import { auditAndReturn, chatAllowed, resolveAgent } from './preamble.js';
 import { getNotifier } from './notifier.js';
 
 const WHISPER_TIMEOUT_MS = 60_000;
-const TEMP_SUBDIR = 'parallel-code-telegram-voice';
+const TEMP_SUBDIR = 'legion-telegram-voice';
 const OPENAI_TRANSCRIPTION_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
 async function safeReply(ctx: Context, body: string): Promise<void> {

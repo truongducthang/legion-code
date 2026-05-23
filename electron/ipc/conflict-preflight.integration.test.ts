@@ -166,7 +166,7 @@ describe('integration: real git', () => {
   });
 
   it('returns non-clean status when feature and main diverge on the same file', async () => {
-    // TODO(parallel-code): KNOWN LATENT BUG in electron/ipc/git.ts:1525-1535.
+    // TODO(legion): KNOWN LATENT BUG in electron/ipc/git.ts:1525-1535.
     // Real `git merge-tree --write-tree` writes the "CONFLICT (content): ..."
     // marker to STDOUT (not into the error's `.message`), so
     // `checkMergeStatus`'s `String(e)` parser misses it and reports

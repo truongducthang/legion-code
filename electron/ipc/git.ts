@@ -162,7 +162,7 @@ const SANDBOX_EXCLUDE_PATTERNS = [
   '/.zprofile',
   '/.zshrc',
 ];
-const SANDBOX_EXCLUDE_HEADER = '# parallel-code: sandbox bind-mount artifacts';
+const SANDBOX_EXCLUDE_HEADER = '# legion: sandbox bind-mount artifacts';
 const seededSandboxExcludes = new Set<string>();
 
 // --- Internal helpers ---

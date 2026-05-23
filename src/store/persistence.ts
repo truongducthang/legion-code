@@ -174,7 +174,7 @@ export async function saveState(): Promise<void> {
     desktopNotificationsEnabled: store.desktopNotificationsEnabled,
     inactiveColumnOpacity: store.inactiveColumnOpacity,
     editorCommand: store.editorCommand || undefined,
-    dockerImage: store.dockerImage !== 'parallel-code-agent:latest' ? store.dockerImage : undefined,
+    dockerImage: store.dockerImage !== 'legion-agent:latest' ? store.dockerImage : undefined,
     askCodeProvider: store.askCodeProvider !== 'claude' ? store.askCodeProvider : undefined,
     customAgents: store.customAgents.length > 0 ? [...store.customAgents] : undefined,
     keybindingMigrationDismissed: store.keybindingMigrationDismissed || undefined,
@@ -586,7 +586,7 @@ export async function loadState(): Promise<void> {
       s.dockerImage =
         typeof rawDockerImage === 'string' && rawDockerImage.trim()
           ? rawDockerImage.trim()
-          : 'parallel-code-agent:latest';
+          : 'legion-agent:latest';
 
       s.askCodeProvider = raw.askCodeProvider === 'minimax' ? 'minimax' : 'claude';
 

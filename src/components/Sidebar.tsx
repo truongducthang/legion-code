@@ -352,32 +352,55 @@ export function Sidebar() {
             >
               <defs>
                 <linearGradient id="legionLogoBar1" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#fb7185" />
-                  <stop offset="1" stop-color="#991b1b" />
+                  <stop offset="0" stop-color="#ffd6d6" />
+                  <stop offset="0.12" stop-color="#fb7185" />
+                  <stop offset="0.45" stop-color="#dc2626" />
+                  <stop offset="0.78" stop-color="#991b1b" />
+                  <stop offset="1" stop-color="#450a0a" />
                 </linearGradient>
                 <linearGradient id="legionLogoBar2" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#fcd34d" />
-                  <stop offset="1" stop-color="#b45309" />
+                  <stop offset="0" stop-color="#fff4cc" />
+                  <stop offset="0.12" stop-color="#fcd34d" />
+                  <stop offset="0.45" stop-color="#f59e0b" />
+                  <stop offset="0.78" stop-color="#b45309" />
+                  <stop offset="1" stop-color="#4d2607" />
                 </linearGradient>
                 <linearGradient id="legionLogoBracket" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stop-color="#fde68a" />
+                  <stop offset="0" stop-color="#fff7d6" />
+                  <stop offset="0.55" stop-color="#fcd34d" />
                   <stop offset="1" stop-color="#b45309" />
                 </linearGradient>
               </defs>
               <g transform="rotate(-10 28 28)">
-                <rect x="7" y="6" width="6" height="44" rx="3" fill="url(#legionLogoBar1)" />
-                <rect x="19" y="6" width="6" height="44" rx="3" fill="url(#legionLogoBar2)" />
+                <rect
+                  x="18.62"
+                  y="8.92"
+                  width="6.62"
+                  height="41.92"
+                  rx="3.31"
+                  fill="url(#legionLogoBar1)"
+                />
+                <rect
+                  x="39.55"
+                  y="8.92"
+                  width="6.62"
+                  height="41.92"
+                  rx="3.31"
+                  fill="url(#legionLogoBar2)"
+                />
                 <path
-                  d="M34 8 H47 V22"
+                  d="M 16.45 7.99 L 11.11 7.99 L 11.11 21.30"
+                  fill="none"
                   stroke="url(#legionLogoBracket)"
-                  stroke-width="3.5"
+                  stroke-width="2.76"
                   stroke-linecap="round"
                   stroke-linejoin="round"
                 />
                 <path
-                  d="M47 34 H34 V48"
+                  d="M 47.55 48.71 L 52.89 48.71 L 52.89 34.59"
+                  fill="none"
                   stroke="url(#legionLogoBracket)"
-                  stroke-width="3.5"
+                  stroke-width="2.76"
                   stroke-linecap="round"
                   stroke-linejoin="round"
                 />

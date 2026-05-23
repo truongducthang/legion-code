@@ -129,7 +129,7 @@ function buildSpawnArgs(
     cols: 120,
     rows: 40,
     dockerMode: true,
-    dockerImage: 'parallel-code-agent:test',
+    dockerImage: 'legion-agent:test',
     shareDockerAgentAuth: false,
     onOutput: { __CHANNEL_ID__: 'channel-1' },
     ...overrides,
@@ -269,7 +269,7 @@ describe('spawnAgent docker mode', () => {
     expect(getFlagValues(ctx.args, '-e')).toContain(`HOME=<redacted>`);
     expect(logged).not.toContain('secret-api-key');
     expect(logged).not.toContain(`HOME=${DOCKER_CONTAINER_HOME}`);
-    expect(logged).toContain('parallel-code-agent:test');
+    expect(logged).toContain('legion-agent:test');
   });
 
   it('redacts inline docker env values in spawn debug logs', () => {
@@ -332,7 +332,7 @@ describe('spawnAgent docker mode', () => {
         spawnAgent(createMockWindow(), buildSpawnArgs({ command, shareDockerAgentAuth: true }));
 
         const volumeFlags = getFlagValues(getLastSpawnCall().args, '-v');
-        const expectedHostDir = `${home}/.parallel-code/agent-auth/${command}/${relDir}`;
+        const expectedHostDir = `${home}/.legion/agent-auth/${command}/${relDir}`;
         expect(volumeFlags).toContain(`${expectedHostDir}:${DOCKER_CONTAINER_HOME}/${relDir}`);
       },
     );
@@ -346,7 +346,7 @@ describe('spawnAgent docker mode', () => {
         buildSpawnArgs({ command: 'claude', shareDockerAgentAuth: true }),
       );
 
-      const hostDir = `${home}/.parallel-code/agent-auth/claude/.claude`;
+      const hostDir = `${home}/.legion/agent-auth/claude/.claude`;
       expect(fs.existsSync(hostDir)).toBe(true);
     });
 
@@ -360,7 +360,7 @@ describe('spawnAgent docker mode', () => {
       );
 
       const volumeFlags = getFlagValues(getLastSpawnCall().args, '-v');
-      const expectedHostFile = `${home}/.parallel-code/agent-auth/claude/.claude.json`;
+      const expectedHostFile = `${home}/.legion/agent-auth/claude/.claude.json`;
       expect(volumeFlags).toContain(`${expectedHostFile}:${DOCKER_CONTAINER_HOME}/.claude.json`);
       expect(fs.readFileSync(expectedHostFile, 'utf8')).toBe('{}');
     });
@@ -375,7 +375,7 @@ describe('spawnAgent docker mode', () => {
       );
 
       const volumeFlags = getFlagValues(getLastSpawnCall().args, '-v');
-      expect(volumeFlags.some((v) => v.includes('.parallel-code/agent-auth'))).toBe(false);
+      expect(volumeFlags.some((v) => v.includes('.legion/agent-auth'))).toBe(false);
     });
 
     it('does not mount agent auth directory for an unknown agent command', () => {
@@ -388,7 +388,7 @@ describe('spawnAgent docker mode', () => {
       );
 
       const volumeFlags = getFlagValues(getLastSpawnCall().args, '-v');
-      expect(volumeFlags.some((v) => v.includes('.parallel-code/agent-auth'))).toBe(false);
+      expect(volumeFlags.some((v) => v.includes('.legion/agent-auth'))).toBe(false);
     });
   });
 });
@@ -489,18 +489,18 @@ describe('validateCommand', () => {
 });
 
 describe('resolveProjectDockerfile', () => {
-  it('returns absolute path when .parallel-code/Dockerfile exists in project root', () => {
+  it('returns absolute path when .legion/Dockerfile exists in project root', () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-resolve-'));
     tempPaths.push(projectRoot);
-    const dockerDir = path.join(projectRoot, '.parallel-code');
+    const dockerDir = path.join(projectRoot, '.legion');
     fs.mkdirSync(dockerDir, { recursive: true });
     fs.writeFileSync(path.join(dockerDir, 'Dockerfile'), 'FROM node:20\n');
 
     const result = resolveProjectDockerfile(projectRoot);
-    expect(result).toBe(path.join(projectRoot, '.parallel-code', 'Dockerfile'));
+    expect(result).toBe(path.join(projectRoot, '.legion', 'Dockerfile'));
   });
 
-  it('returns null when .parallel-code/Dockerfile does not exist', () => {
+  it('returns null when .legion/Dockerfile does not exist', () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-resolve-'));
     tempPaths.push(projectRoot);
 
@@ -513,10 +513,10 @@ describe('resolveProjectDockerfile', () => {
     expect(result).toBeNull();
   });
 
-  it('returns null when .parallel-code/Dockerfile is a directory', () => {
+  it('returns null when .legion/Dockerfile is a directory', () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-resolve-'));
     tempPaths.push(projectRoot);
-    fs.mkdirSync(path.join(projectRoot, '.parallel-code', 'Dockerfile'), { recursive: true });
+    fs.mkdirSync(path.join(projectRoot, '.legion', 'Dockerfile'), { recursive: true });
 
     const result = resolveProjectDockerfile(projectRoot);
     expect(result).toBeNull();
@@ -524,19 +524,19 @@ describe('resolveProjectDockerfile', () => {
 });
 
 describe('projectImageTag', () => {
-  it('returns a tag in the format parallel-code-project:<12-char-hash>', () => {
+  it('returns a tag in the format legion-project:<12-char-hash>', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-tag-'));
     tempPaths.push(tmpDir);
     const dockerfilePath = path.join(tmpDir, 'Dockerfile');
     fs.writeFileSync(dockerfilePath, 'FROM node:20\nRUN echo hello\n');
 
     const tag = projectImageTag(dockerfilePath);
-    expect(tag).toMatch(/^parallel-code-project:[a-f0-9]{12}$/);
+    expect(tag).toMatch(/^legion-project:[a-f0-9]{12}$/);
   });
 
-  it('returns parallel-code-project:unknown for non-existent Dockerfile path', () => {
+  it('returns legion-project:unknown for non-existent Dockerfile path', () => {
     const tag = projectImageTag('/nonexistent/Dockerfile');
-    expect(tag).toBe('parallel-code-project:unknown');
+    expect(tag).toBe('legion-project:unknown');
   });
 });
 
@@ -570,7 +570,7 @@ describe('dockerImageExists', () => {
     );
 
     await expect(
-      dockerImageExists('parallel-code-project:test', {
+      dockerImageExists('legion-project:test', {
         dockerfilePath: '/nonexistent/Dockerfile',
       }),
     ).resolves.toBe(false);
@@ -737,14 +737,14 @@ describe('buildDockerImage', () => {
   it('uses the provided build context for a project dockerfile', () => {
     const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pty-build-context-'));
     tempPaths.push(projectRoot);
-    const dockerDir = path.join(projectRoot, '.parallel-code');
+    const dockerDir = path.join(projectRoot, '.legion');
     fs.mkdirSync(dockerDir, { recursive: true });
     const dockerfilePath = path.join(dockerDir, 'Dockerfile');
     fs.writeFileSync(dockerfilePath, 'FROM node:20\n');
 
     buildDockerImage(createMockWindow(), 'channel:build-test', {
       dockerfilePath,
-      imageTag: 'parallel-code-project:test',
+      imageTag: 'legion-project:test',
       buildContext: projectRoot,
     } as unknown as Parameters<typeof buildDockerImage>[2]);
 

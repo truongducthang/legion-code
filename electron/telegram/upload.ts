@@ -5,7 +5,7 @@
  * Flow:
  *   1. Reject files over 20 MB (Telegram bot API ceiling).
  *   2. `getFile(file_id)` → download to
- *      `<os.tmpdir>/parallel-code-telegram-uploads/<name>`.
+ *      `<os.tmpdir>/legion-telegram-uploads/<name>`.
  *   3. Reply with the absolute path inside an inline-code span and an
  *      inline keyboard `[📋 Paste path into agent]`.
  *   4. When the user taps the paste button, write the shell-escaped path
@@ -32,7 +32,7 @@ import { auditAndReturn, chatAllowed, resolveAgent } from './preamble.js';
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const UPLOAD_TTL_MS = 10 * 60 * 1000;
 const UPLOAD_CACHE_MAX = 100;
-const TEMP_SUBDIR = 'parallel-code-telegram-uploads';
+const TEMP_SUBDIR = 'legion-telegram-uploads';
 
 interface UploadEntry {
   absolutePath: string;

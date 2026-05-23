@@ -1,8 +1,9 @@
 schema: spec-driven
 
 context: |
-  Project: parallel-code — Electron desktop app that runs Claude Code, Codex,
-  and Gemini side by side, each in its own git worktree. macOS + Linux only.
+  Project: legion — Electron desktop app that runs Claude Code, Codex,
+  and Gemini side by side, each in its own git worktree. Builds for
+  macOS, Linux, and Windows.
 
   For stack, layout, and conventions see `CLAUDE.md` (the single source of
   truth). Highlights relevant when authoring specs:

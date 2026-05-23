@@ -155,11 +155,11 @@ item from a virtual file system).
   writing
 - **AND** clamps the remaining basename to 200 characters
 - **AND** prefixes the basename with
-  `parallel-code-drop-<unix-ms>-<6-hex>-` where `<6-hex>` is a fresh
+  `legion-drop-<unix-ms>-<6-hex>-` where `<6-hex>` is a fresh
   random suffix per call so two same-name drops landing in the same
   millisecond never collide on disk
 - **AND** when the sanitized basename is empty, falls back to
-  `parallel-code-drop-<unix-ms>-<6-hex>.png`
+  `legion-drop-<unix-ms>-<6-hex>.png`
 
 #### Scenario: Renderer caps oversized drops without surfacing an error
 

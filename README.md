@@ -23,7 +23,7 @@
   <img src="https://img.shields.io/badge/Electron-47848F?logo=electron&logoColor=white" alt="Electron">
   <img src="https://img.shields.io/badge/SolidJS-2C4F7C?logo=solid&logoColor=white" alt="SolidJS">
   <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux-lightgrey" alt="macOS | Linux">
+  <img src="https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey" alt="macOS | Linux | Windows">
   <img src="https://img.shields.io/badge/License-MIT-blue" alt="License">
 </p>
 
@@ -84,12 +84,12 @@ When you're happy with the result, merge the branch back to main from the sideba
 - Shell terminals per task, scoped to the worktree
 - **Direct mode** for working on the main branch without isolation, plus support for **folders without a git repo**
 - **Existing worktree import** — bring already-created worktrees into Parallel Code
-- **Sandboxing with project-specific Dockerfiles** — drop a `.parallel-code/Dockerfile` into the project and tasks run inside it
+- **Sandboxing with project-specific Dockerfiles** — drop a `.legion/Dockerfile` into the project and tasks run inside it
 - **Coverage radar** — per-file test-coverage badges in the Changed Files panel
 - **Configurable keyboard shortcuts** with per-agent presets
 - 10 themes — Islands Dark, Minimal, Graphite, Midnight, Classic, Indigo, Ember, Glacier, Zenburnesque, Workbench
 - State persists across restarts
-- macOS and Linux
+- macOS, Linux, and Windows
 
 </details>
 
@@ -107,20 +107,81 @@ When you're happy with the result, merge the branch back to main from the sideba
 
 ## Getting Started
 
-1. **Download** the latest release for your platform from the [releases page](https://github.com/johannesjo/parallel-code/releases/latest):
+1. **Download** the latest release for your platform from the [releases page](https://github.com/truongducthang/legion/releases/latest):
    - **macOS** — `.dmg` (universal)
    - **Linux** — `.AppImage` or `.deb`
+   - **Windows** — `.exe` installer (NSIS) or portable `.exe`
 
 2. **Install at least one AI coding CLI:** [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), or [Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli)
 
-3. **Open Parallel Code**, point it at a git repo, and start dispatching tasks.
+3. **Open Legion**, point it at a git repo, and start dispatching tasks.
+
+### macOS: first launch (unsigned build)
+
+Legion's release `.dmg` is currently **unsigned** (no paid Apple Developer ID yet),
+so macOS Gatekeeper will block the first launch with
+_"Legion can't be opened because Apple cannot check it for malicious software."_
+
+You have four safe ways around it:
+
+**Option A — Right-click trick (easiest, GUI only, macOS ≤ Sonoma):**
+
+1. Drag `Legion.app` from the DMG into `/Applications`
+2. Open `/Applications`, **right-click** `Legion.app` → **Open**
+3. The warning now has an **Open** button. Click it.
+4. macOS remembers the exception; future launches open normally.
+
+> On macOS **Sequoia (15) or newer**, Apple removed the **Open** button
+> from the right-click dialog. Use Option D instead.
+
+**Option B — Strip the quarantine flag (one terminal command after install):**
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Legion.app
+```
+
+This removes the `com.apple.quarantine` extended attribute that your browser
+added when it downloaded the DMG. After running it, double-clicking the app
+opens normally.
+
+**Option C — Download via `curl` instead of a browser (skips the flag entirely):**
+
+```sh
+# Replace VERSION with the latest tag from the releases page
+curl -L -o Legion.dmg \
+  https://github.com/truongducthang/legion/releases/download/VERSION/Legion-VERSION-arm64.dmg
+
+hdiutil attach Legion.dmg
+cp -R "/Volumes/Legion/Legion.app" /Applications/
+hdiutil detach "/Volumes/Legion"
+```
+
+`curl` and `wget` do **not** set the `com.apple.quarantine` xattr, so the
+copied `.app` opens immediately — no right-click, no `xattr` step needed.
+
+**Option D — System Settings → "Open Anyway" (Sequoia 15+ users):**
+
+1. Double-click `Legion.app` → block dialog appears → click **Done**.
+2. Open **System Settings** → **Privacy & Security**.
+3. Scroll to the **Security** section. You'll see:
+   _"`Legion.app` was blocked from use because it is not from an identified developer."_
+4. Click **Open Anyway** next to it, then confirm with your admin password.
+5. App launches. Future double-clicks work normally.
+
+> All four options are safe — they only override the _"file came from the
+> internet"_ mark, not any actual signature check. You can inspect the
+> source on this repo before running.
+
+If you'd rather build locally to skip Gatekeeper entirely, see
+**Build from source** below — locally built apps never carry the
+quarantine flag.
 
 <details>
 <summary><strong>Build from source</strong></summary>
 
 ```sh
-git clone https://github.com/johannesjo/parallel-code.git
-cd parallel-code
+git clone https://github.com/truongducthang/legion.git
+cd legion
 npm install
 npm run dev
 ```
@@ -163,7 +224,7 @@ Requires [Node.js](https://nodejs.org/) v18+.
 
 ---
 
-If Parallel Code saves you time, consider giving it a [star on GitHub](https://github.com/johannesjo/parallel-code). It helps others find the project.
+If Legion saves you time, consider giving it a [star on GitHub](https://github.com/truongducthang/legion). It helps others find the project.
 
 ## Remote control via Telegram
 
@@ -257,7 +318,7 @@ when at least one allowed chat exists.
 ### File uploads
 
 Send any document or photo (≤ 20 MB) from an allowed chat and the bot
-downloads it under `~/.../tmp/parallel-code-telegram-uploads/`. The
+downloads it under `~/.../tmp/legion-telegram-uploads/`. The
 reply includes the absolute path and a _Paste path into agent_ button
 that writes the shell-escaped path into the focused agent's PTY — useful
 for sharing a screenshot or log file with a running session.
@@ -283,4 +344,20 @@ for sharing a screenshot or log file with a running session.
 
 ## License
 
-MIT
+Released under the [MIT License](LICENSE).
+
+## Credits
+
+Legion is a rebrand and continued fork of
+[johannesjo/parallel-code](https://github.com/johannesjo/parallel-code),
+originally created by **Johannes Millan** and released under the MIT
+License. The full upstream copyright, license text, and contributor
+history are preserved in [`LICENSE`](LICENSE) and the git log.
+
+Modifications, additions, and new features in this fork (including
+remote tunnel access, Telegram control, hung-agent detection, mobile
+spawn, and the Legion rebrand) are © 2026 Truong Duc Thang, released
+under the same MIT License.
+
+If you find Legion useful, please consider [starring the upstream
+project](https://github.com/johannesjo/parallel-code) as well.

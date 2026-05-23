@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <linearGradient id="spBg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a0a10"/>
+      <stop offset="0.55" stop-color="#10040a"/>
+      <stop offset="1" stop-color="#020001"/>
+    </linearGradient>
+    <radialGradient id="spBgLight" cx="0.18" cy="0.18" r="0.75">
+      <stop offset="0" stop-color="#c47a4a" stop-opacity="0.38"/>
+      <stop offset="0.5" stop-color="#5a1818" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="spAura" cx="0.27" cy="0.5" r="0.42">
+      <stop offset="0" stop-color="#ef4444" stop-opacity="0.36"/>
+      <stop offset="0.55" stop-color="#b45309" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#7c1d1d" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="spVignette" cx="0.5" cy="1" r="1.05">
+      <stop offset="0.55" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.72"/>
+    </radialGradient>
+
+    <linearGradient id="spBar1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd6d6"/>
+      <stop offset="0.12" stop-color="#fb7185"/>
+      <stop offset="0.45" stop-color="#dc2626"/>
+      <stop offset="0.78" stop-color="#991b1b"/>
+      <stop offset="1" stop-color="#450a0a"/>
+    </linearGradient>
+    <linearGradient id="spBar2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff4cc"/>
+      <stop offset="0.12" stop-color="#fcd34d"/>
+      <stop offset="0.45" stop-color="#f59e0b"/>
+      <stop offset="0.78" stop-color="#b45309"/>
+      <stop offset="1" stop-color="#4d2607"/>
+    </linearGradient>
+    <linearGradient id="spEdge" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.5"/>
+      <stop offset="0.25" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.4"/>
+    </linearGradient>
+    <linearGradient id="spGloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="spBracket" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff7d6"/>
+      <stop offset="0.55" stop-color="#fcd34d" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#b45309" stop-opacity="0.7"/>
+    </linearGradient>
+
+    <filter id="spBlur" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+
+    <clipPath id="spIconClip"><rect width="1024" height="1024" rx="224"/></clipPath>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#spBg)"/>
+  <rect width="1280" height="640" fill="url(#spBgLight)"/>
+
+  <!-- Subtle grid -->
+  <g opacity="0.035" stroke="#fcd34d" stroke-width="1" fill="none">
+    <line x1="0" y1="160" x2="1280" y2="160"/>
+    <line x1="0" y1="320" x2="1280" y2="320"/>
+    <line x1="0" y1="480" x2="1280" y2="480"/>
+    <line x1="320" y1="0" x2="320" y2="640"/>
+    <line x1="640" y1="0" x2="640" y2="640"/>
+    <line x1="960" y1="0" x2="960" y2="640"/>
+  </g>
+
+  <!-- Aura behind icon -->
+  <ellipse cx="328" cy="320" rx="340" ry="300" fill="url(#spAura)"/>
+
+  <!-- Icon mark (420x420) at x=118, y=110 — scale 0.41 from 1024 -->
+  <g transform="translate(118 110) scale(0.41)">
+    <g clip-path="url(#spIconClip)">
+      <rect width="1024" height="1024" fill="url(#spBg)"/>
+      <rect width="1024" height="1024" fill="url(#spBgLight)"/>
+
+      <g opacity="0.05" stroke="#fcd34d" stroke-width="1" fill="none">
+        <line x1="0" y1="170" x2="1024" y2="170"/>
+        <line x1="0" y1="340" x2="1024" y2="340"/>
+        <line x1="0" y1="510" x2="1024" y2="510"/>
+        <line x1="0" y1="680" x2="1024" y2="680"/>
+        <line x1="0" y1="850" x2="1024" y2="850"/>
+        <line x1="170" y1="0" x2="170" y2="1024"/>
+        <line x1="340" y1="0" x2="340" y2="1024"/>
+        <line x1="510" y1="0" x2="510" y2="1024"/>
+        <line x1="680" y1="0" x2="680" y2="1024"/>
+        <line x1="854" y1="0" x2="854" y2="1024"/>
+      </g>
+
+      <ellipse cx="512" cy="512" rx="440" ry="400" fill="url(#spAura)"/>
+
+      <g transform="rotate(-10 512 512)">
+        <g filter="url(#spBlur)" opacity="0.85">
+          <rect x="332" y="820" width="80" height="60" rx="30" fill="#000"/>
+          <rect x="636" y="820" width="80" height="60" rx="30" fill="#000"/>
+        </g>
+
+        <g>
+          <rect x="324" y="220" width="96" height="608" rx="48" fill="#190308"/>
+          <rect x="312" y="208" width="96" height="608" rx="48" fill="url(#spBar1)"/>
+          <rect x="312" y="208" width="96" height="608" rx="48" fill="url(#spEdge)"/>
+          <rect x="324" y="222" width="72" height="180" rx="36" fill="url(#spGloss)" opacity="0.55"/>
+          <ellipse cx="360" cy="232" rx="42" ry="8" fill="#ffffff" opacity="0.7"/>
+          <rect x="312" y="208" width="96" height="608" rx="48" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2"/>
+        </g>
+
+        <g>
+          <rect x="628" y="220" width="96" height="608" rx="48" fill="#1c0d02"/>
+          <rect x="616" y="208" width="96" height="608" rx="48" fill="url(#spBar2)"/>
+          <rect x="616" y="208" width="96" height="608" rx="48" fill="url(#spEdge)"/>
+          <rect x="628" y="222" width="72" height="180" rx="36" fill="url(#spGloss)" opacity="0.55"/>
+          <ellipse cx="664" cy="232" rx="42" ry="8" fill="#ffffff" opacity="0.7"/>
+          <rect x="616" y="208" width="96" height="608" rx="48" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2"/>
+        </g>
+
+        <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <g stroke="#000000" stroke-opacity="0.6" stroke-width="48" transform="translate(0 10)">
+            <path d="M 268 196 L 188 196 L 188 376"/>
+            <path d="M 756 828 L 836 828 L 836 648"/>
+          </g>
+          <g stroke="url(#spBracket)" stroke-width="40">
+            <path d="M 268 196 L 188 196 L 188 376"/>
+            <path d="M 756 828 L 836 828 L 836 648"/>
+          </g>
+        </g>
+
+        <g fill="#fcd34d" opacity="0.75">
+          <circle cx="512" cy="430" r="6"/>
+          <circle cx="512" cy="510" r="6"/>
+          <circle cx="512" cy="590" r="6"/>
+        </g>
+      </g>
+
+      <path d="M 0 0 L 1024 0 L 1024 360 Q 512 220 0 360 Z" fill="url(#spGloss)" opacity="0.12"/>
+    </g>
+    <rect x="3" y="3" width="1018" height="1018" rx="222" fill="none" stroke="#fcd34d" stroke-opacity="0.2" stroke-width="3"/>
+  </g>
+
+  <!-- Thin gold divider between icon block and text block -->
+  <line x1="582" y1="220" x2="582" y2="420" stroke="#fcd34d" stroke-opacity="0.22" stroke-width="1"/>
+
+  <!-- Wordmark "Legion" + tagline -->
+  <g font-family="system-ui, -apple-system, 'Helvetica Neue', Helvetica, Arial, sans-serif">
+    <text x="628" y="338" font-size="156" font-weight="800" letter-spacing="-5" fill="#fde68a">Legion</text>
+    <text x="632" y="392" font-size="30" font-weight="400" letter-spacing="0.3" fill="#fcd34d" opacity="0.72">Dispatch AI coding agents in parallel.</text>
+  </g>
+
+  <!-- Top highlight + vignette -->
+  <path d="M 0 0 L 1280 0 L 1280 200 Q 640 120 0 200 Z" fill="url(#spGloss)" opacity="0.06"/>
+  <rect width="1280" height="640" fill="url(#spVignette)"/>
+</svg>

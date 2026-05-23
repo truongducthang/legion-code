@@ -1,16 +1,33 @@
 {
   "name": "legion",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "description": "Dispatch AI coding agents in parallel, each in its own git worktree.",
   "author": {
     "name": "Truong Duc Thang",
-    "email": "thangtd@uitgis.vn"
+    "email": "ducthangm9@gmail.com"
   },
   "contributors": [
     {
       "name": "Johannes Millan",
       "email": "contact@super-productivity.com"
     }
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/truongducthang/legion.git"
+  },
+  "homepage": "https://github.com/truongducthang/legion#readme",
+  "bugs": {
+    "url": "https://github.com/truongducthang/legion/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "electron",
+    "git-worktree",
+    "parallel-coding",
+    "terminal"
   ],
   "main": "dist-electron/main.js",
   "type": "module",
@@ -112,6 +129,10 @@
         "to": "icon.png"
       },
       {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      },
+      {
         "from": "docker/",
         "to": "docker/"
       }
@@ -129,6 +150,19 @@
         }
       }
     },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Legion"
+    },
     "mac": {
       "target": "dmg",
       "category": "public.app-category.developer-tools",
@@ -137,7 +171,7 @@
         "NSMicrophoneUsageDescription": "Legion needs microphone access for voice input in terminal sessions."
       },
       "gatekeeperAssess": false,
-      "notarize": true,
+      "notarize": false,
       "x64ArchFiles": "Contents/Resources/app.asar.unpacked/node_modules/node-pty/prebuilds/**",
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist"

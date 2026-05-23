@@ -110,11 +110,14 @@ if (!app.isPackaged) verifyPreloadAllowlist();
 let mainWindow: BrowserWindow | null = null;
 
 function getIconPath(): string | undefined {
-  if (process.platform !== 'linux') return undefined;
+  // macOS uses the .icns bundled into the .app via electron-builder; setting
+  // BrowserWindow.icon there is a no-op for the title bar / dock.
+  if (process.platform === 'darwin') return undefined;
+  const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'icon.png');
+    return path.join(process.resourcesPath, iconFile);
   }
-  return path.join(__dirname, '..', 'build', 'icon.png');
+  return path.join(__dirname, '..', 'build', iconFile);
 }
 
 function createWindow() {

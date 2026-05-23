@@ -55,7 +55,7 @@ export const [store, setStore] = createStore<AppStore>({
   desktopNotificationsEnabled: false,
   inactiveColumnOpacity: 0.6,
   editorCommand: '',
-  dockerImage: 'parallel-code-agent:latest',
+  dockerImage: 'legion-agent:latest',
   dockerAvailable: false,
   shareDockerAgentAuth: false,
   askCodeProvider: 'claude',

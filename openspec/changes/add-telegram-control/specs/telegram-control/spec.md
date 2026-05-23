@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Allow a user to monitor and control their parallel-code AI agents from any
+Allow a user to monitor and control their legion AI agents from any
 Telegram client (mobile or desktop) without needing the desktop and the
 phone to share a network, and to receive native push notifications when an
 agent needs human input. The capability is opt-in per project, the bot

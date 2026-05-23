@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Let users monitor and interact with their parallel-code AI agents from a phone
+Let users monitor and interact with their legion AI agents from a phone
 or tablet on the same local network (or Tailscale) without returning to the
 desktop.
 

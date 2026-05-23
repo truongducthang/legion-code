@@ -1,6 +1,6 @@
-# Parallel Code
+# Legion
 
-Electron desktop app — SolidJS frontend, Node.js backend. Published for **macOS and Linux only** (no Windows).
+Electron desktop app — SolidJS frontend, Node.js backend. Published for **macOS, Linux, and Windows**.
 
 ## Stack
 

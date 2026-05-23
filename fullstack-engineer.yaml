@@ -1,0 +1,31 @@
+environments:
+  - claude
+phases:
+  - requirements
+  - design
+  - planning
+  - implementation
+  - testing
+  - deployment
+  - monitoring
+paths:
+  docs: docs/ai
+skills:
+  - registry: codeaholicguy/ai-devkit
+    skill: dev-lifecycle
+  - registry: codeaholicguy/ai-devkit
+    skill: agent-orchestration
+  - registry: codeaholicguy/ai-devkit
+    skill: capture-knowledge
+  - registry: codeaholicguy/ai-devkit
+    skill: debug
+  - registry: codeaholicguy/ai-devkit
+    skill: memory
+  - registry: codeaholicguy/ai-devkit
+    skill: simplify-implementation
+  - registry: codeaholicguy/ai-devkit
+    skill: technical-writer
+  - registry: codeaholicguy/ai-devkit
+    skill: verify
+  - registry: codeaholicguy/ai-devkit
+    skill: tdd

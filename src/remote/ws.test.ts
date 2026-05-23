@@ -71,7 +71,7 @@ beforeEach(async () => {
     location: { protocol: 'http:', host: '127.0.0.1', search: '', href: 'http://127.0.0.1/' },
     history: { replaceState: () => undefined },
   };
-  stubStorage.setItem('parallel-code-token', 'tok-1');
+  stubStorage.setItem('legion-token', 'tok-1');
 
   const fake = makeFakeWebSocket();
   instances = fake.instances;

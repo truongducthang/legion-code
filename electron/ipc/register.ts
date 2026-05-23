@@ -217,8 +217,8 @@ function sanitizeDroppedName(name: string): string {
     .trim()
     .slice(0, 200);
   const stamp = `${Date.now()}-${crypto.randomBytes(3).toString('hex')}`;
-  if (base) return `parallel-code-drop-${stamp}-${base}`;
-  return `parallel-code-drop-${stamp}.png`;
+  if (base) return `legion-drop-${stamp}-${base}`;
+  return `legion-drop-${stamp}.png`;
 }
 
 /**
@@ -798,7 +798,7 @@ export function registerAllHandlers(win: BrowserWindow): void {
   });
 
   // --- Clipboard ---
-  const clipboardImagePath = path.join(os.tmpdir(), 'parallel-code-clipboard.png');
+  const clipboardImagePath = path.join(os.tmpdir(), 'legion-clipboard.png');
 
   // Resolve the most useful representation of the current clipboard contents
   // for pasting into a terminal. Order of preference:
