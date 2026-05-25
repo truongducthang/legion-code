@@ -1,7 +1,10 @@
 import { defineConfig } from 'vitest/config';
+import solidPlugin from 'vite-plugin-solid';
 
 export default defineConfig({
+  plugins: [solidPlugin({ ssr: true })],
   test: {
+    environment: 'node',
     include: ['src/**/*.test.ts', 'electron/**/*.test.ts'],
     coverage: {
       provider: 'v8',

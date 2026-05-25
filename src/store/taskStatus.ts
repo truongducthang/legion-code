@@ -854,7 +854,11 @@ export function getTaskAttentionState(taskId: string): TaskAttentionState {
   const hasQuestion = hasRunningTaskActivity(taskId, isAgentAskingQuestion);
   if (hasQuestion) return 'needs_input';
 
-  if (task.needsReview) return 'review';
+  const steps = task.stepsContent;
+  if (steps && steps.length > 0) {
+    const latest = steps[steps.length - 1];
+    if (latest.status === 'awaiting_review') return 'review';
+  }
 
   const active = activeAgents(); // reactive read
   const hasActive = hasRunningTaskActivity(taskId, (id) => active.has(id));
@@ -877,17 +881,18 @@ export function taskNeedsAttention(taskId: string): boolean {
 export function getTaskDotStatus(taskId: string): TaskDotStatus {
   const task = store.tasks[taskId];
   if (!task) return 'waiting';
-  const active = activeAgents(); // reactive read
-  const hasActive = hasRunningTaskActivity(taskId, (id) => active.has(id));
-  if (hasActive) return 'busy';
-
-  if (task.needsReview) return 'review';
 
   const steps = task.stepsContent;
   if (steps && steps.length > 0) {
     const latest = steps[steps.length - 1];
     if (latest.status === 'awaiting_review') return 'review';
   }
+
+  const active = activeAgents(); // reactive read
+  const hasActive = hasRunningTaskActivity(taskId, (id) => active.has(id));
+  if (hasActive) return 'busy';
+
+  if (task.needsReview) return 'review';
 
   if (task.gitIsolation === 'none') return 'waiting';
   if (isTaskReady(taskId)) return 'ready';
