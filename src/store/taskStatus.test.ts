@@ -692,6 +692,14 @@ describe('task attention state', () => {
     expect(taskNeedsAttention('task-1')).toBe(true);
   });
 
+  it('marks coordinator review tasks as review attention', () => {
+    setMockTask('task-1', { needsReview: true });
+
+    expect(getTaskAttentionState('task-1')).toBe('review');
+    expect(getTaskDotStatus('task-1')).toBe('review');
+    expect(taskNeedsAttention('task-1')).toBe(true);
+  });
+
   it('detects question state for background task agents', () => {
     mockActiveTaskId = 'task-1';
     setMockTask('task-2', { agentIds: ['agent-2'] });
@@ -743,5 +751,54 @@ describe('task attention state', () => {
     expect(isAgentAskingQuestion('agent-2')).toBe(true);
     expect(getTaskAttentionState('task-2')).toBe('needs_input');
     expect(taskNeedsAttention('task-2')).toBe(true);
+  });
+
+  it('returns review for tasks with needsReview flag set', () => {
+    setMockTask('task-1', { agentIds: ['agent-1'], needsReview: true });
+    setMockAgent('agent-1', { status: 'running' });
+
+    expect(getTaskAttentionState('task-1')).toBe('review');
+    expect(taskNeedsAttention('task-1')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// task dot status
+// ---------------------------------------------------------------------------
+describe('getTaskDotStatus', () => {
+  it('returns review for tasks with needsReview flag set', () => {
+    setMockTask('task-1', { agentIds: ['agent-1'], needsReview: true });
+    setMockAgent('agent-1', { status: 'running' });
+
+    expect(getTaskDotStatus('task-1')).toBe('review');
+  });
+
+  it('returns busy over review when an agent is actively producing output', () => {
+    setMockTask('task-1', { agentIds: ['agent-1'], needsReview: true });
+    setMockAgent('agent-1', { status: 'running' });
+    markAgentSpawned('agent-1');
+
+    expect(getTaskDotStatus('task-1')).toBe('busy');
+  });
+});
+
+describe('coordinator auto-trust', () => {
+  it('auto-accepts trust dialogs for skip-permission coordinator subtasks even when global auto-trust is off', () => {
+    setMockTask('task-1', {
+      agentIds: ['agent-1'],
+      coordinatedBy: 'coord-1',
+      skipPermissions: true,
+      controlledBy: 'human',
+    });
+    setMockAgent('agent-1', { status: 'running' });
+
+    markAgentOutput(
+      'agent-1',
+      new TextEncoder().encode('Do you trust the files in this folder?'),
+      'task-1',
+    );
+
+    expect(isAutoTrustSettling('agent-1')).toBe(true);
+    expect(getTaskAttentionState('task-1')).not.toBe('needs_input');
   });
 });

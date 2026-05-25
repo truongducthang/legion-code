@@ -1,6 +1,6 @@
-# Parallel Code — Docker agent image
+# Legion — Docker agent image
 # Pre-installs common dev tools so agents don't waste time on setup.
-# Build:  docker build -t legion-agent:latest docker/
+# Build:  docker build -t legion-code-agent:latest docker/
 # Size target: ~600 MB (multi-stage not needed; one fat layer is fine for a dev image)
 
 FROM ubuntu:22.04

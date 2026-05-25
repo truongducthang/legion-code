@@ -1,14 +1,14 @@
-title = "Gitleaks config for Parallel Code"
+title = "Gitleaks config for Legion"
 
 [extend]
 # Use the default Gitleaks ruleset as the base
 useDefault = true
 
 [[rules]]
-id = "legion-mcp-token"
-description = "Parallel Code MCP bearer token"
+id = "legion-code-mcp-token"
+description = "Legion MCP bearer token"
 regex = '''PARALLEL_CODE_MCP_TOKEN\s*[=:]\s*['"]?[A-Za-z0-9+/_-]{20,}['"]?'''
-tags = ["token", "legion"]
+tags = ["token", "legion-code"]
 
 [[rules]]
 id = "bearer-token-in-url"

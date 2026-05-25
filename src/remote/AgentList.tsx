@@ -149,7 +149,7 @@ export function AgentList(props: AgentListProps) {
         >
           This is an experimental feature.{' '}
           <a
-            href="https://github.com/truongducthang/legion/issues"
+            href="https://github.com/truongducthang/legion-code/issues"
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: '#2ec8ff' }}

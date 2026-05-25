@@ -37,7 +37,7 @@ import type { RemoteProject, RemoteBranch, ServerMessage, SpawnResultMessage } f
 // ---------------------------------------------------------------------------
 
 let staticDir: string;
-let server: ReturnType<typeof startRemoteServer> | null = null;
+let server: Awaited<ReturnType<typeof startRemoteServer>> | null = null;
 let port: number;
 
 /** Ask the OS for a free port, then close immediately so we can rebind. */
@@ -66,10 +66,11 @@ function startServer(telegramAuth?: TelegramAuthHook): ReturnType<typeof startRe
     getTaskName: (taskId) => taskId,
     getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
     telegramAuth,
+    getCoordinator: () => null,
   });
 }
 
-async function listening(s: ReturnType<typeof startRemoteServer>): Promise<number> {
+async function listening(s: Awaited<ReturnType<typeof startRemoteServer>>): Promise<number> {
   // Poll until the underlying http server reports a bound port.
   for (let attempt = 0; attempt < 50; attempt++) {
     const info = s.addressInfo();
@@ -200,7 +201,7 @@ afterEach(async () => {
 
 describe('POST /api/telegram-auth', () => {
   it('returns 200 with the session token when verify resolves to true', async () => {
-    server = startServer({ verify: async () => true });
+    server = await startServer({ verify: async () => true });
     const p = await listening(server);
     const res = await fetch(`http://127.0.0.1:${p}/api/telegram-auth`, {
       method: 'POST',
@@ -215,7 +216,7 @@ describe('POST /api/telegram-auth', () => {
   });
 
   it('returns 401 when verify throws (signature / freshness / allowlist failure)', async () => {
-    server = startServer({
+    server = await startServer({
       verify: async () => {
         throw new TelegramError('initdata-tampered', 'hash mismatch');
       },
@@ -231,7 +232,7 @@ describe('POST /api/telegram-auth', () => {
   });
 
   it('returns 404 when verify resolves to false (bot disabled / no token)', async () => {
-    server = startServer({ verify: async () => false });
+    server = await startServer({ verify: async () => false });
     const p = await listening(server);
     const res = await fetch(`http://127.0.0.1:${p}/api/telegram-auth`, {
       method: 'POST',
@@ -241,7 +242,7 @@ describe('POST /api/telegram-auth', () => {
   });
 
   it('returns 404 when telegramAuth hook is not supplied at all', async () => {
-    server = startServer(); // no telegramAuth
+    server = await startServer(); // no telegramAuth
     const p = await listening(server);
     const res = await fetch(`http://127.0.0.1:${p}/api/telegram-auth`, {
       method: 'POST',
@@ -251,7 +252,7 @@ describe('POST /api/telegram-auth', () => {
   });
 
   it('rejects payloads larger than the 4 KB cap with 413', async () => {
-    server = startServer({ verify: async () => true });
+    server = await startServer({ verify: async () => true });
     const p = await listening(server);
     const oversized = 'a'.repeat(5000);
     const res = await fetch(`http://127.0.0.1:${p}/api/telegram-auth`, {
@@ -265,7 +266,7 @@ describe('POST /api/telegram-auth', () => {
     // The /api/telegram-auth route exists to MINT the session token, so it
     // must work without one. Regression guard: ensure it is not intercepted
     // by the generic /api/ auth check.
-    server = startServer({ verify: async () => true });
+    server = await startServer({ verify: async () => true });
     const p = await listening(server);
     const res = await fetch(`http://127.0.0.1:${p}/api/telegram-auth`, {
       method: 'POST',
@@ -277,7 +278,7 @@ describe('POST /api/telegram-auth', () => {
 
   it('passes the raw initData body through to the verify hook unchanged', async () => {
     let received: string | null = null;
-    server = startServer({
+    server = await startServer({
       verify: async (initData) => {
         received = initData;
         return true;
@@ -299,12 +300,13 @@ describe('POST /api/telegram-auth', () => {
 
 describe('remote server spec scenarios', () => {
   it('closes unauthenticated client with 4001 on list_projects (spec)', async () => {
-    server = startRemoteServer({
+    server = await startRemoteServer({
       port,
       staticDir,
       getTaskName: () => '',
       getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
       listProjects: async () => [{ root: '/p', name: 'p', defaultBaseBranch: null }],
+      getCoordinator: () => null,
     });
     const conn = await openConn(false);
     send(conn.ws, { type: 'list_projects' });
@@ -315,12 +317,13 @@ describe('remote server spec scenarios', () => {
   });
 
   it('replies with empty projects list when desktop has no open projects (spec)', async () => {
-    server = startRemoteServer({
+    server = await startRemoteServer({
       port,
       staticDir,
       getTaskName: () => '',
       getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
       listProjects: async () => [],
+      getCoordinator: () => null,
     });
     const conn = await openConn(true);
     send(conn.ws, { type: 'list_projects' });
@@ -333,7 +336,7 @@ describe('remote server spec scenarios', () => {
   });
 
   it('replies with empty branches list when the callback rejects (spec: git failure)', async () => {
-    server = startRemoteServer({
+    server = await startRemoteServer({
       port,
       staticDir,
       getTaskName: () => '',
@@ -342,6 +345,7 @@ describe('remote server spec scenarios', () => {
       listBranches: async () => {
         throw new Error('git boom');
       },
+      getCoordinator: () => null,
     });
     const conn = await openConn(true);
     send(conn.ws, { type: 'list_branches', projectRoot: '/p' });
@@ -355,7 +359,7 @@ describe('remote server spec scenarios', () => {
   });
 
   it('parser drops oversized prompt and the server emits no spawn_result (spec)', async () => {
-    server = startRemoteServer({
+    server = await startRemoteServer({
       port,
       staticDir,
       getTaskName: () => '',
@@ -368,6 +372,7 @@ describe('remote server spec scenarios', () => {
         taskId: 't',
         agentId: 'a',
       })),
+      getCoordinator: () => null,
     });
     const conn = await openConn(true);
     // Send an oversized prompt directly via the raw socket — parseClientMessage
@@ -406,11 +411,12 @@ describe('remote server spec scenarios', () => {
 
 describe('remote server spawn_task', () => {
   it('closes unauthenticated clients with 4001 on spawn_task', async () => {
-    server = startRemoteServer({
+    server = await startRemoteServer({
       port,
       staticDir,
       getTaskName: () => '',
       getAgentStatus: () => ({ status: 'exited', exitCode: null, lastLine: '' }),
+      getCoordinator: () => null,
     });
     const conn = await openConn(false);
     send(conn.ws, {
@@ -427,7 +433,7 @@ describe('remote server spawn_task', () => {
   });
 
   it('returns invalid_project for unknown projectRoot', async () => {
-    server = startRemoteServer({
+    server = await startRemoteServer({
       port,
       staticDir,
       getTaskName: () => '',
@@ -440,6 +446,7 @@ describe('remote server spawn_task', () => {
         error: 'invalid_project',
         message: 'project not in current project list',
       }),
+      getCoordinator: () => null,
     });
     const conn = await openConn(true);
     send(conn.ws, {
@@ -487,7 +494,7 @@ describe('remote server spawn_task', () => {
         agentId: 'a',
       };
     });
-    server = startRemoteServer({
+    server = await startRemoteServer({
       port,
       staticDir,
       getTaskName: () => '',
@@ -495,6 +502,7 @@ describe('remote server spawn_task', () => {
       listProjects: async () => projects,
       listBranches: async () => branches,
       spawnTask,
+      getCoordinator: () => null,
     });
     const conn = await openConn(true);
 
@@ -537,7 +545,7 @@ describe('remote server spawn_task', () => {
         agentId: 'a',
       }),
     );
-    server = startRemoteServer({
+    server = await startRemoteServer({
       port,
       staticDir,
       getTaskName: () => '',
@@ -545,6 +553,7 @@ describe('remote server spawn_task', () => {
       listProjects: async () => [{ root: '/p', name: 'p', defaultBaseBranch: 'main' }],
       listBranches: async () => [{ name: 'main', current: true }],
       spawnTask,
+      getCoordinator: () => null,
     });
     const conn = await openConn(true);
     const base = {
@@ -587,7 +596,7 @@ describe('remote server spawn_task', () => {
             );
         }),
     );
-    server = startRemoteServer({
+    server = await startRemoteServer({
       port,
       staticDir,
       getTaskName: () => '',
@@ -595,6 +604,7 @@ describe('remote server spawn_task', () => {
       listProjects: async () => [{ root: '/p', name: 'p', defaultBaseBranch: 'main' }],
       listBranches: async () => [{ name: 'main', current: true }],
       spawnTask,
+      getCoordinator: () => null,
     });
     const conn = await openConn(true);
     const base = {

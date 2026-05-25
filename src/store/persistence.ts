@@ -21,9 +21,35 @@ import type { AgentDef } from '../ipc/types';
 import { inferDockerSource } from '../lib/docker';
 import { DEFAULT_TERMINAL_FONT } from '../lib/fonts';
 import { isLookPreset } from '../lib/look';
+import { validateCustomTheme, parseThemeCss, themeToCss } from '../lib/custom-theme';
+import type { CustomTheme } from '../lib/custom-theme';
 import { syncTerminalCounter } from './terminals';
 
 const RESTORED_AGENT_SPAWN_STAGGER_MS = 1_000;
+
+export async function loadCustomThemes(): Promise<boolean> {
+  let files: { id: string; css: string }[];
+  try {
+    files = await invoke<{ id: string; css: string }[]>(IPC.LoadCustomThemes);
+  } catch {
+    // IPC failure — don't touch store and signal failure so caller skips sanitization.
+    return false;
+  }
+  const loaded: Record<string, CustomTheme> = {};
+  for (const { id, css } of files) {
+    try {
+      const validated = parseThemeCss(css);
+      loaded[id] = { ...validated, id };
+    } catch (e) {
+      console.warn(
+        `[themes] Skipping malformed theme file "${id}":`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+  setStore('customThemes', loaded);
+  return true;
+}
 
 /** Enrich an agent def with resume/skip-permissions args from fresh defaults. */
 function enrichAgentDef(agentDef: AgentDef | null | undefined, availableAgents: AgentDef[]): void {
@@ -171,16 +197,22 @@ export async function saveState(): Promise<void> {
     showSteps: store.showSteps,
     showSidebarTips: store.showSidebarTips,
     showSidebarProgress: store.showSidebarProgress,
+    projectsCollapsed: store.projectsCollapsed,
     desktopNotificationsEnabled: store.desktopNotificationsEnabled,
     inactiveColumnOpacity: store.inactiveColumnOpacity,
     editorCommand: store.editorCommand || undefined,
-    dockerImage: store.dockerImage !== 'legion-agent:latest' ? store.dockerImage : undefined,
+    dockerImage: store.dockerImage !== 'legion-code-agent:latest' ? store.dockerImage : undefined,
     askCodeProvider: store.askCodeProvider !== 'claude' ? store.askCodeProvider : undefined,
     customAgents: store.customAgents.length > 0 ? [...store.customAgents] : undefined,
     keybindingMigrationDismissed: store.keybindingMigrationDismissed || undefined,
     focusMode: store.focusMode || undefined,
     verboseLogging: store.verboseLogging || undefined,
+    coordinatorNotificationDelayMs:
+      store.coordinatorNotificationDelayMs !== 60_000
+        ? store.coordinatorNotificationDelayMs
+        : undefined,
     shareDockerAgentAuth: store.shareDockerAgentAuth || undefined,
+    activeCustomThemeId: store.activeCustomThemeId ?? undefined,
     appearanceMode: store.appearanceMode !== 'dark' ? store.appearanceMode : undefined,
     lightThemePreset:
       store.lightThemePreset !== 'islands-light' ? store.lightThemePreset : undefined,
@@ -188,6 +220,8 @@ export async function saveState(): Promise<void> {
     darkThemePreset: store.darkThemePreset !== 'islands-dark' ? store.darkThemePreset : undefined,
     darkThemeCustomId: store.darkThemeCustomId ?? undefined,
     telegram: { ...store.telegram, voice: { ...store.telegram.voice } },
+    coordinatorModeEnabled: store.coordinatorModeEnabled || undefined,
+    coordinatorControlHintDismissed: store.coordinatorControlHintDismissed || undefined,
   };
 
   for (const taskId of store.taskOrder) {
@@ -227,6 +261,15 @@ export async function saveState(): Promise<void> {
       savedPromptedAgentIndexes: task.savedPromptedAgentIndexes,
       planFileName: task.planFileName,
       stepsEnabled: task.stepsEnabled,
+      coordinatorMode: task.coordinatorMode,
+      propagateSkipPermissions: task.propagateSkipPermissions,
+      coordinatedBy: task.coordinatedBy,
+      controlledBy: task.controlledBy,
+      mcpConfigPath: task.mcpConfigPath,
+      signalDoneReceived: task.signalDoneReceived,
+      signalDoneAt: task.signalDoneAt,
+      signalDoneConsumed: task.signalDoneConsumed,
+      needsReview: task.needsReview,
     };
   }
 
@@ -273,6 +316,15 @@ export async function saveState(): Promise<void> {
       planFileName: task.planFileName,
       stepsEnabled: task.stepsEnabled,
       collapsed: true,
+      coordinatorMode: task.coordinatorMode,
+      propagateSkipPermissions: task.propagateSkipPermissions,
+      coordinatedBy: task.coordinatedBy,
+      controlledBy: task.controlledBy,
+      mcpConfigPath: task.mcpConfigPath,
+      signalDoneReceived: task.signalDoneReceived,
+      signalDoneAt: task.signalDoneAt,
+      signalDoneConsumed: task.signalDoneConsumed,
+      needsReview: task.needsReview,
     };
   }
 
@@ -388,6 +440,7 @@ interface LegacyPersistedState {
   showSteps?: unknown;
   showSidebarTips?: unknown;
   showSidebarProgress?: unknown;
+  projectsCollapsed?: unknown;
   desktopNotificationsEnabled?: unknown;
   inactiveColumnOpacity?: unknown;
   editorCommand?: unknown;
@@ -399,7 +452,10 @@ interface LegacyPersistedState {
   keybindingMigrationDismissed?: unknown;
   focusMode?: unknown;
   verboseLogging?: unknown;
+  coordinatorNotificationDelayMs?: unknown;
   shareDockerAgentAuth?: unknown;
+  customThemes?: unknown;
+  activeCustomThemeId?: unknown;
   appearanceMode?: unknown;
   lightThemePreset?: unknown;
   lightThemeCustomId?: unknown;
@@ -407,6 +463,8 @@ interface LegacyPersistedState {
   darkThemeCustomId?: unknown;
   telegram?: unknown;
   persistenceVersion?: unknown;
+  coordinatorModeEnabled?: unknown;
+  coordinatorControlHintDismissed?: unknown;
 }
 
 export async function loadState(): Promise<void> {
@@ -529,6 +587,8 @@ export async function loadState(): Promise<void> {
       s.showSidebarTips = typeof raw.showSidebarTips === 'boolean' ? raw.showSidebarTips : true;
       s.showSidebarProgress =
         typeof raw.showSidebarProgress === 'boolean' ? raw.showSidebarProgress : true;
+      s.projectsCollapsed =
+        typeof raw.projectsCollapsed === 'boolean' ? raw.projectsCollapsed : false;
       s.desktopNotificationsEnabled =
         typeof raw.desktopNotificationsEnabled === 'boolean'
           ? raw.desktopNotificationsEnabled
@@ -549,7 +609,20 @@ export async function loadState(): Promise<void> {
 
       s.verboseLogging = typeof raw.verboseLogging === 'boolean' ? raw.verboseLogging : false;
 
+      const rawDelay = raw.coordinatorNotificationDelayMs;
+      s.coordinatorNotificationDelayMs =
+        typeof rawDelay === 'number' &&
+        Number.isFinite(rawDelay) &&
+        rawDelay >= 5_000 &&
+        rawDelay <= 300_000
+          ? Math.round(rawDelay)
+          : 60_000;
+
       s.shareDockerAgentAuth = raw.shareDockerAgentAuth === true;
+
+      if (typeof raw.activeCustomThemeId === 'string') {
+        s.activeCustomThemeId = raw.activeCustomThemeId;
+      }
 
       // Restore appearance mode and per-mode theme preferences
       const savedMode = raw.appearanceMode;
@@ -571,22 +644,30 @@ export async function loadState(): Promise<void> {
       s.telegram = coercePersistedTelegram(raw.telegram);
 
       // Backward compat: if no appearanceMode was persisted, mirror the loaded
-      // themePreset into the appropriate slot.
+      // themePreset (and any active custom theme) into the appropriate slot.
       if (!savedMode) {
+        const migratedCustomId =
+          typeof raw.activeCustomThemeId === 'string' ? raw.activeCustomThemeId : null;
         if (isLookPreset(raw.themePreset) && raw.themePreset === 'islands-light') {
           s.appearanceMode = 'light';
           s.lightThemePreset = raw.themePreset;
+          s.lightThemeCustomId = migratedCustomId;
         } else {
           s.appearanceMode = 'dark';
           if (isLookPreset(raw.themePreset)) s.darkThemePreset = raw.themePreset;
+          s.darkThemeCustomId = migratedCustomId;
         }
       }
+
+      s.coordinatorModeEnabled = raw.coordinatorModeEnabled === true;
+
+      s.coordinatorControlHintDismissed = raw.coordinatorControlHintDismissed === true;
 
       const rawDockerImage = raw.dockerImage;
       s.dockerImage =
         typeof rawDockerImage === 'string' && rawDockerImage.trim()
           ? rawDockerImage.trim()
-          : 'legion-agent:latest';
+          : 'legion-code-agent:latest';
 
       s.askCodeProvider = raw.askCodeProvider === 'minimax' ? 'minimax' : 'claude';
 
@@ -662,6 +743,20 @@ export async function loadState(): Promise<void> {
           savedPromptedAgentIndexes: validPromptedAgentIndexes(pt.savedPromptedAgentIndexes),
           planFileName: pt.planFileName,
           stepsEnabled: pt.stepsEnabled,
+          coordinatorMode: pt.coordinatorMode,
+          propagateSkipPermissions: pt.propagateSkipPermissions,
+          coordinatedBy: pt.coordinatedBy,
+          controlledBy:
+            pt.controlledBy ?? (pt.coordinatorMode || pt.coordinatedBy ? 'coordinator' : undefined),
+          // Defer TerminalView spawn until StartMCPServer/hydrateTask complete —
+          // the config file has a stale token from the previous session until then.
+          mcpStartupStatus:
+            pt.coordinatorMode || pt.coordinatedBy ? ('pending' as const) : undefined,
+          mcpConfigPath: pt.mcpConfigPath,
+          signalDoneReceived: pt.signalDoneReceived,
+          signalDoneAt: pt.signalDoneAt,
+          signalDoneConsumed: pt.signalDoneConsumed,
+          needsReview: pt.needsReview,
         };
 
         s.tasks[taskId] = task;
@@ -749,6 +844,18 @@ export async function loadState(): Promise<void> {
           collapsed: true,
           savedAgentDef: agentDefs[0],
           savedAgentDefs: agentDefs.length > 0 ? agentDefs : undefined,
+          coordinatorMode: pt.coordinatorMode,
+          propagateSkipPermissions: pt.propagateSkipPermissions,
+          coordinatedBy: pt.coordinatedBy,
+          controlledBy:
+            pt.controlledBy ?? (pt.coordinatorMode || pt.coordinatedBy ? 'coordinator' : undefined),
+          mcpStartupStatus:
+            pt.coordinatorMode || pt.coordinatedBy ? ('pending' as const) : undefined,
+          mcpConfigPath: pt.mcpConfigPath,
+          signalDoneReceived: pt.signalDoneReceived,
+          signalDoneAt: pt.signalDoneAt,
+          signalDoneConsumed: pt.signalDoneConsumed,
+          needsReview: pt.needsReview,
         };
 
         s.tasks[taskId] = task;
@@ -788,4 +895,33 @@ export async function loadState(): Promise<void> {
   }
 
   syncTerminalCounter();
+
+  // Await migration of any customThemes found in state.json to individual CSS files.
+  // Runs after the produce block so it can be properly awaited. loadCustomThemes() in
+  // App.tsx runs after loadState() returns, so the files will exist before the load.
+  if (raw.customThemes && typeof raw.customThemes === 'object') {
+    const migrations: Promise<unknown>[] = [];
+    for (const [id, entry] of Object.entries(raw.customThemes as Record<string, unknown>)) {
+      try {
+        const validated = validateCustomTheme(entry);
+        const css = themeToCss(
+          validated.name,
+          validated.description ?? '',
+          validated.terminalBackground,
+          validated.vars,
+        );
+        migrations.push(invoke(IPC.SaveCustomTheme, { id, css }));
+      } catch {
+        // skip malformed entries
+      }
+    }
+    if (migrations.length > 0) await Promise.allSettled(migrations);
+  }
+
+  // Notify backend to initialize coordinator module if the feature was enabled.
+  if (store.coordinatorModeEnabled) {
+    invoke(IPC.SetCoordinatorModeEnabled, { enabled: true }).catch((e) =>
+      console.warn('Failed to notify backend of coordinator mode:', e),
+    );
+  }
 }

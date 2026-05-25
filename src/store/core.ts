@@ -52,10 +52,11 @@ export const [store, setStore] = createStore<AppStore>({
   showSteps: false,
   showSidebarTips: true,
   showSidebarProgress: true,
+  projectsCollapsed: false,
   desktopNotificationsEnabled: false,
   inactiveColumnOpacity: 0.6,
   editorCommand: '',
-  dockerImage: 'legion-agent:latest',
+  dockerImage: 'legion-code-agent:latest',
   dockerAvailable: false,
   shareDockerAgentAuth: false,
   askCodeProvider: 'claude',
@@ -83,6 +84,12 @@ export const [store, setStore] = createStore<AppStore>({
   verboseLogging: false,
   telegram: { ...DEFAULT_TELEGRAM_PERSISTED },
   telegramHasToken: false,
+  coordinatorModeEnabled: false,
+  coordinatorNotificationDelayMs: 60_000,
+  coordinatorControlHintDismissed: false,
+  customThemes: {},
+  activeCustomThemeId: null,
+  mcpStatus: { running: false, port: null, coordinatorTaskId: null, mcpConfigPath: null },
 });
 
 type CleanupPanelStore = Pick<

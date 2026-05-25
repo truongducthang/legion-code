@@ -114,7 +114,7 @@ function PlanViewerContent(props: PlanViewerContentProps) {
         if (!source) return;
         const id = `mermaid-plan-${Date.now()}-${i}`;
         mermaid.render(id, source).then(({ svg }) => {
-          el.innerHTML = svg;
+          el.innerHTML = svg; // nosemgrep: semgrep.no-inner-html-without-sanitize -- mermaid renders its own sanitized SVG; source is plan text not user HTML
           el.classList.add('mermaid-rendered');
         });
       });

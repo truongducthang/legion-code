@@ -49,6 +49,11 @@ import {
   setStepsContent,
   setDockerAvailable,
   toggleTaskFocusMode,
+  initMCPListeners,
+  markTaskMcpPending,
+  markTaskMcpReady,
+  setTaskMcpLaunchArgs,
+  markTaskMcpError,
 } from './store/store';
 import { isGitHubUrl } from './lib/github-url';
 import type { PersistedWindowState } from './store/types';
@@ -61,8 +66,9 @@ import {
 import { resolvedBindings, loadKeybindings, dismissMigrationBanner } from './store/keybindings';
 import { setupAutosave } from './store/autosave';
 import { setupFocusedAgentSync } from './store/telegram';
+import { buildCustomThemeCss } from './lib/custom-theme';
 import { osIsDark } from './lib/os-appearance';
-import { applyAppearanceMode } from './store/store';
+import { applyAppearanceMode, markCustomThemesReady, loadCustomThemes } from './store/store';
 import { isMac, mod } from './lib/platform';
 import { createCtrlWheelZoomHandler } from './lib/wheelZoom';
 import { ArenaOverlay } from './arena/ArenaOverlay';
@@ -72,6 +78,7 @@ import { startConflictPreflightSubscription } from './store/conflict-preflight';
 import { startHungAgentSubscription } from './store/hung-agent';
 import { startMobileTaskSyncSubscription } from './store/mobileTaskSync';
 import { startPublicTunnelStatusSubscription } from './store/remote';
+import { startUpdateSubscription } from './store/updates';
 
 const MIN_WINDOW_DIMENSION = 100;
 
@@ -255,9 +262,34 @@ function App() {
     applyAppearanceMode();
   });
 
-  // Sync theme to <html> so Portal content (dialogs, tooltips) inherits CSS variables
+  // Sync theme to <html> so Portal content (dialogs, tooltips) inherits CSS variables.
+  // data-look always holds the base preset so structural rules (islands, workbench, etc.)
+  // continue to apply. data-custom-theme overlays color variables when a custom theme is active.
   createEffect(() => {
     document.documentElement.dataset.look = store.themePreset;
+    const customId = store.activeCustomThemeId;
+    if (customId) {
+      document.documentElement.dataset.customTheme = customId;
+    } else {
+      delete document.documentElement.dataset.customTheme;
+    }
+  });
+
+  // Inject/update custom theme CSS into a dedicated <style> tag
+  createEffect(() => {
+    const customId = store.activeCustomThemeId;
+    let styleEl = document.getElementById('custom-theme-style') as HTMLStyleElement | null;
+    if (!customId) {
+      if (styleEl) styleEl.textContent = '';
+      return;
+    }
+    const theme = store.customThemes[customId];
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'custom-theme-style';
+      document.head.appendChild(styleEl);
+    }
+    styleEl.textContent = theme ? buildCustomThemeCss(theme) : '';
   });
 
   // Toggle font smoothing CSS class on body
@@ -337,7 +369,96 @@ function App() {
       () => setDockerAvailable(false),
     );
     await loadState();
+    const themesLoaded = await loadCustomThemes();
+    // Only unlock slot-ID sanitization when the IPC call succeeded. On failure
+    // customThemes remains {} and we must not null out the user's persisted selections.
+    if (themesLoaded) markCustomThemesReady();
     await loadKeybindings();
+
+    // Rewrite MCP config files for persisted coordinator tasks so the new
+    // session's port/token are in effect before any agent resumes.
+    // Docker coordinator tasks have no persisted mcpConfigPath (their .mcp.json
+    // lives in the worktree, not a temp file), but they still need StartMCPServer
+    // called so the remote server starts and the container name is registered.
+    const mcpRestorePromises: Promise<unknown>[] = [];
+    for (const taskId of [...store.taskOrder, ...store.collapsedTaskOrder]) {
+      const task = store.tasks[taskId];
+      if (!task?.coordinatorMode) continue;
+      const projectRoot = store.projects.find((p) => p.id === task.projectId)?.path;
+      if (!projectRoot) continue;
+      const agentDef = task.agentIds[0] ? store.agents[task.agentIds[0]]?.def : undefined;
+      // Reconstruct Docker container name from the coordinator's PTY agent id.
+      // The container may be dead after restart, but this wires up docker exec for sub-tasks
+      // when the user manually restarts the coordinator agent.
+      const dockerContainerName =
+        task.dockerMode && task.agentIds[0]
+          ? `parallel-code-${task.agentIds[0].slice(0, 12)}`
+          : undefined;
+      markTaskMcpPending(taskId);
+      mcpRestorePromises.push(
+        invoke<{ mcpLaunchArgs?: string[] }>(IPC.StartMCPServer, {
+          coordinatorTaskId: task.id,
+          projectId: task.projectId,
+          projectRoot,
+          worktreePath: task.gitIsolation === 'worktree' ? task.worktreePath : undefined,
+          skipPermissions: task.skipPermissions ?? false,
+          propagateSkipPermissions: task.propagateSkipPermissions ?? false,
+          agentCommand: agentDef?.command ?? 'claude',
+          agentArgs: agentDef?.args ?? [],
+          dockerContainerName,
+          dockerImage: task.dockerMode ? task.dockerImage : undefined,
+        })
+          .then((result) => {
+            setTaskMcpLaunchArgs(taskId, result?.mcpLaunchArgs);
+            markTaskMcpReady(taskId);
+          })
+          .catch((err) => {
+            console.warn(`[MCP] Failed to restore MCP server for coordinator task ${taskId}:`, err);
+            markTaskMcpError(taskId, String(err));
+          }),
+      );
+    }
+    // Wait for all coordinators to register before hydrating their children —
+    // hydrateTask() needs the coordinator entry to exist in the backend registry.
+    await Promise.allSettled(mcpRestorePromises);
+
+    // Hydrate backend coordinator task registry with persisted child tasks so MCP
+    // tools (list_tasks, send_prompt, close_task, etc.) work after app restart.
+    const hydratePromises: Promise<void>[] = [];
+    for (const taskId of [...store.taskOrder, ...store.collapsedTaskOrder]) {
+      const task = store.tasks[taskId];
+      if (!task?.coordinatedBy) continue;
+      // Skip if coordinator restore failed — hydrating into a broken coordinator leaves
+      // children with stale MCP wiring and misleading 'ready' status.
+      if (store.tasks[task.coordinatedBy]?.mcpStartupStatus !== 'ready') continue;
+      const projectRoot = store.projects.find((p) => p.id === task.projectId)?.path;
+      if (!projectRoot) continue;
+      markTaskMcpPending(task.id);
+      hydratePromises.push(
+        invoke(IPC.MCP_HydrateCoordinatedTask, {
+          id: task.id,
+          name: task.name,
+          projectId: task.projectId,
+          projectRoot,
+          branchName: task.branchName,
+          baseBranch: task.baseBranch,
+          worktreePath: task.worktreePath,
+          coordinatorTaskId: task.coordinatedBy,
+          controlledBy: task.controlledBy,
+          agentId: task.agentIds[0],
+          signalDoneAt: task.signalDoneAt,
+          signalDoneConsumed: task.signalDoneConsumed,
+          mcpConfigPath: task.mcpConfigPath,
+          preambleFileExistedBefore: task.preambleFileExistedBefore,
+        })
+          .then(() => markTaskMcpReady(task.id))
+          .catch((err) => {
+            console.warn(`[MCP] Failed to hydrate coordinated task ${taskId}:`, err);
+            markTaskMcpError(task.id, String(err));
+          }),
+      );
+    }
+    await Promise.allSettled(hydratePromises);
 
     // Restore plan content for tasks that had a plan file before restart
     for (const taskId of [...store.taskOrder, ...store.collapsedTaskOrder]) {
@@ -376,12 +497,14 @@ function App() {
     setupAutosave();
     setupFocusedAgentSync();
     startTaskStatusPolling();
+    const stopMCPListeners = initMCPListeners();
     const stopNotificationWatcher = startDesktopNotificationWatcher(windowFocused);
     const stopPrChecksSubscription = startPrChecksSubscription();
     const stopConflictPreflightSubscription = startConflictPreflightSubscription();
     const stopHungAgentSubscription = startHungAgentSubscription();
     const stopMobileTaskSync = startMobileTaskSyncSubscription();
     const stopPublicTunnelSync = startPublicTunnelStatusSubscription();
+    const stopUpdateSubscription = startUpdateSubscription();
 
     // Listen for plan content pushed from backend plan watcher
     const offPlanContent = window.electron.ipcRenderer.on(IPC.PlanContent, (data: unknown) => {
@@ -570,12 +693,14 @@ function App() {
       unlistenCloseRequested();
       cleanupShortcuts();
       stopTaskStatusPolling();
+      stopMCPListeners();
       stopNotificationWatcher();
       stopPrChecksSubscription();
       stopConflictPreflightSubscription();
       stopHungAgentSubscription();
       stopMobileTaskSync();
       stopPublicTunnelSync();
+      stopUpdateSubscription();
       offPlanContent();
       offStepsContent();
       unlistenFocusChanged?.();

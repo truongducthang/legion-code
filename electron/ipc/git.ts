@@ -162,7 +162,7 @@ const SANDBOX_EXCLUDE_PATTERNS = [
   '/.zprofile',
   '/.zshrc',
 ];
-const SANDBOX_EXCLUDE_HEADER = '# legion: sandbox bind-mount artifacts';
+const SANDBOX_EXCLUDE_HEADER = '# legion-code: sandbox bind-mount artifacts';
 const seededSandboxExcludes = new Set<string>();
 
 // --- Internal helpers ---
@@ -914,8 +914,21 @@ export async function removeWorktree(
     try {
       await exec('git', ['worktree', 'remove', '--force', worktreePath], { cwd: repoRoot });
     } catch {
-      // Fallback: direct directory removal
-      fs.rmSync(worktreePath, { recursive: true, force: true });
+      // Fallback: direct directory removal. Docker Desktop's VirtioFS bind-mount
+      // may still be releasing after the container exits — retry with backoff.
+      const delays = [0, 500, 1500, 3000];
+      let lastErr: unknown;
+      for (const delay of delays) {
+        if (delay > 0) await new Promise((r) => setTimeout(r, delay));
+        try {
+          fs.rmSync(worktreePath, { recursive: true, force: true });
+          lastErr = undefined;
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      if (lastErr) throw lastErr;
     }
   }
 
@@ -1162,6 +1175,15 @@ async function getUntrackedChangedFiles(
   return files;
 }
 
+export async function getDiffBaseSha(worktreePath: string, baseBranch?: string): Promise<string> {
+  const headHash = await pinHead(worktreePath);
+  const diffBase = await detectDiffBase(worktreePath, headHash, baseBranch).catch(() => ({
+    sha: headHash,
+    ref: headHash,
+  }));
+  return diffBase.sha;
+}
+
 export async function getAllFileDiffs(worktreePath: string, baseBranch?: string): Promise<string> {
   const headHash = await pinHead(worktreePath);
 
@@ -1399,10 +1421,19 @@ export async function getWorktreeStatus(
   has_uncommitted_changes: boolean;
   current_branch: string | null;
 }> {
-  const { stdout: statusOut } = await exec('git', ['status', '--porcelain'], {
-    cwd: worktreePath,
-    maxBuffer: MAX_BUFFER,
-  });
+  if (!fs.existsSync(worktreePath)) {
+    return { has_committed_changes: false, has_uncommitted_changes: false, current_branch: null };
+  }
+  let statusOut: string;
+  try {
+    ({ stdout: statusOut } = await exec('git', ['status', '--porcelain'], {
+      cwd: worktreePath,
+      maxBuffer: MAX_BUFFER,
+    }));
+  } catch {
+    // Worktree removed between existsSync and exec (race condition)
+    return { has_committed_changes: false, has_uncommitted_changes: false, current_branch: null };
+  }
   const hasUncommittedChanges = statusOut.trim().length > 0;
 
   const currentBranch = await getCurrentBranchName(worktreePath).catch(() => null);
@@ -1549,6 +1580,7 @@ export async function mergeTask(
   cleanup: boolean,
   baseBranch?: string,
   worktreePath?: string,
+  mergeWorktreePath?: string,
 ): Promise<{ main_branch: string; lines_added: number; lines_removed: number }> {
   const lockKey = await detectRepoLockKey(projectRoot).catch(() => projectRoot);
 
@@ -1584,19 +1616,30 @@ export async function mergeTask(
       branchName,
     );
 
-    // Verify clean working tree
+    // When the target branch is already checked out in a worktree (e.g. a coordinator
+    // worktree on a feature branch), we can't git checkout it in projectRoot — git
+    // refuses to check out a branch that's live elsewhere. Use mergeWorktreePath as the
+    // working directory for merge ops when provided; it's already on the right branch.
+    const mergeRoot = mergeWorktreePath ?? projectRoot;
+
+    // Verify clean working tree in the merge root
     const { stdout: statusOut } = await exec('git', ['status', '--porcelain'], {
-      cwd: projectRoot,
+      cwd: mergeRoot,
     });
     if (statusOut.trim())
       throw new Error(
-        'Project root has uncommitted changes. Please commit or stash them before merging.',
+        'Working tree has uncommitted changes. Please commit or stash them before merging.',
       );
 
-    const originalBranch = await getCurrentBranchName(projectRoot).catch(() => null);
+    // Capture the current branch BEFORE any checkout so we can restore it afterward.
+    const originalBranch = mergeWorktreePath
+      ? null
+      : await getCurrentBranchName(projectRoot).catch(() => null);
 
-    // Checkout main (bare branch name, not remote-tracking ref)
-    await exec('git', ['checkout', mainBranch], { cwd: projectRoot });
+    if (!mergeWorktreePath) {
+      // Need to checkout the target branch in the main repo
+      await exec('git', ['checkout', mainBranch], { cwd: projectRoot });
+    }
 
     const restoreBranch = async () => {
       if (originalBranch) {
@@ -1610,9 +1653,9 @@ export async function mergeTask(
 
     if (squash) {
       try {
-        await exec('git', ['merge', '--squash', '--', branchName], { cwd: projectRoot });
+        await exec('git', ['merge', '--squash', '--', branchName], { cwd: mergeRoot });
       } catch (e) {
-        await exec('git', ['reset', '--hard', 'HEAD'], { cwd: projectRoot }).catch((recoverErr) =>
+        await exec('git', ['reset', '--hard', 'HEAD'], { cwd: mergeRoot }).catch((recoverErr) =>
           console.warn('git reset --hard failed during squash recovery:', recoverErr),
         );
         await restoreBranch();
@@ -1620,9 +1663,9 @@ export async function mergeTask(
       }
       const msg = message ?? 'Squash merge';
       try {
-        await exec('git', ['commit', '-m', msg], { cwd: projectRoot });
+        await exec('git', ['commit', '-m', msg], { cwd: mergeRoot });
       } catch (e) {
-        await exec('git', ['reset', '--hard', 'HEAD'], { cwd: projectRoot }).catch((recoverErr) =>
+        await exec('git', ['reset', '--hard', 'HEAD'], { cwd: mergeRoot }).catch((recoverErr) =>
           console.warn('git reset --hard failed during commit recovery:', recoverErr),
         );
         await restoreBranch();
@@ -1630,9 +1673,9 @@ export async function mergeTask(
       }
     } else {
       try {
-        await exec('git', ['merge', '--', branchName], { cwd: projectRoot });
+        await exec('git', ['merge', '--', branchName], { cwd: mergeRoot });
       } catch (e) {
-        await exec('git', ['merge', '--abort'], { cwd: projectRoot }).catch((recoverErr) =>
+        await exec('git', ['merge', '--abort'], { cwd: mergeRoot }).catch((recoverErr) =>
           console.warn('git merge --abort failed:', recoverErr),
         );
         await restoreBranch();
@@ -1846,6 +1889,7 @@ export async function getBranchCommits(
   baseBranch?: string,
   recentFallback?: number,
 ): Promise<CommitInfo[]> {
+  if (!fs.existsSync(worktreePath)) return [];
   const mergeBase = await detectMergeBase(worktreePath, 'HEAD', baseBranch);
   try {
     const { stdout } = await exec(

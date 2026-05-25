@@ -166,7 +166,7 @@ html[data-look='classic'] {
   --bg-selected-subtle: #3e508a33;
   --border: #393b3f;
   --border-subtle: #2d2e32;
-  --border-focus: #5d80ff;
+  --border-focus: #4267ff;
   --fg: #cccdd2;
   --fg-muted: #8b8d93;
   --fg-subtle: #6d7076;
@@ -455,7 +455,7 @@ html[data-look='islands-light'] {
   --fg-muted: #5e6066;
   --fg-subtle: #8d9199;
   --accent: #2c6def;
-  --accent-hover: #245fe0;
+  --accent-hover: #5a8dff;
   --accent-text: #ffffff;
   --link: #2c6def;
   --success: #369650;
@@ -604,6 +604,9 @@ html[data-look^='islands-'] .task-column.focus-mode .rp-cell:has(> .focusable-pa
   position: relative;
 }
 
+html[data-look^='islands-']
+  .task-column.focus-mode
+  .rp-cell:has(> .focusable-panel:focus-within)::after,
 html[data-look^='islands-']
   .task-column.focus-mode
   .rp-cell:has(> .focusable-panel[data-panel-focused='true'])::after {
@@ -927,6 +930,55 @@ textarea::placeholder {
 
 .icon-btn:active {
   transform: translateY(1px);
+}
+
+/* Projects-section header toggle (collapsed/expanded). Subtle hover so the
+   whole row reads as clickable, plus a focus ring matching other sidebar
+   controls. */
+.projects-toggle {
+  border-radius: 4px;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.projects-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.projects-toggle:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 1px;
+}
+
+/* CSS-only collapse animation. The grid-rows trick lets the row collapse from
+   1fr → 0fr without measuring the children. The intermediate `.projects-clip`
+   provides the `overflow: hidden` clip without stealing scroll from the inner
+   list (which needs its own overflow-y: auto). */
+.projects-collapser {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows 0.18s ease,
+    opacity 0.15s ease;
+}
+
+.projects-collapser.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.projects-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .projects-collapser {
+    transition: none;
+  }
 }
 
 .tiling-layout-shell {
@@ -1581,6 +1633,10 @@ body.dragging-task * {
   flex-direction: column;
   gap: 5px;
   width: 100%;
+}
+
+.settings-theme-grid > div:hover .preset-clone-btn {
+  opacity: 1 !important;
 }
 
 .settings-theme-card:hover {

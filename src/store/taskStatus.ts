@@ -28,6 +28,7 @@ const TRUST_EXCLUSION_KEYWORDS =
 // --- Consolidated per-agent tracking state ---
 // Groups all per-agent Maps into one to prevent cleanup leaks.
 interface AgentTrackingState {
+  taskId?: string;
   autoTrustTimer?: ReturnType<typeof setTimeout>;
   autoTrustCooldown?: ReturnType<typeof setTimeout>;
   lastAutoTrustCheckAt?: number;
@@ -106,9 +107,10 @@ function clearAutoTrustState(agentId: string): void {
 }
 
 export type TaskDotStatus = 'busy' | 'waiting' | 'ready' | 'review';
-export type TaskAttentionState = 'idle' | 'active' | 'needs_input' | 'error' | 'ready';
+export type TaskAttentionState = 'idle' | 'active' | 'needs_input' | 'error' | 'ready' | 'review';
 
 // --- Prompt detection helpers ---
+// Re-exported from shared module for backward compatibility.
 
 /** Strip ANSI escape sequences (CSI, OSC, and single-char escapes) from terminal output. */
 export function stripAnsi(text: string): string {
@@ -579,10 +581,23 @@ export function markAgentSpawned(agentId: string): void {
   resetIdleTimer(agentId);
 }
 
+/** True when the task owning this agent should always auto-handle trust dialogs,
+ *  regardless of the autoTrustFolders setting. Coordinator sub-tasks with
+ *  skipPermissions run autonomously — trust dialogs must never block them. */
+function isAutoTrustForced(agentId: string): boolean {
+  const taskId = agentStates.get(agentId)?.taskId;
+  if (!taskId) return false;
+  const task = store.tasks[taskId];
+  return !!(task?.coordinatedBy && task?.skipPermissions);
+}
+
 /** Try to auto-accept trust/permission dialogs for any agent (active or background).
  *  Lightweight check that only runs trust-specific patterns. */
 function tryAutoTrust(agentId: string, rawTail: string): boolean {
-  if (!store.autoTrustFolders || isAutoTrustPending(agentId)) {
+  if (!store.autoTrustFolders && !isAutoTrustForced(agentId)) {
+    return false;
+  }
+  if (isAutoTrustPending(agentId)) {
     return false;
   }
   if (!looksLikeTrustDialog(rawTail)) {
@@ -610,6 +625,13 @@ function tryAutoTrust(agentId: string, rawTail: string): boolean {
     invoke(IPC.WriteToAgent, { agentId, data: '\r' }).catch((err) => {
       logWarn('tasks.autoTrust', 'WriteToAgent failed during auto-trust accept', { err });
     });
+    // If questionJustActivated raced ahead and set human_control before
+    // auto-trust suppressed the question state, release it back to coordinator.
+    const taskId = state.taskId;
+    if (taskId && isAutoTrustForced(agentId) && store.tasks[taskId]?.controlledBy === 'human') {
+      setStore('tasks', taskId, 'controlledBy', 'coordinator');
+      invoke(IPC.MCP_ControlChanged, { taskId, controlledBy: 'coordinator' }).catch(() => {});
+    }
     // Cooldown: ignore trust patterns for 1s so the same dialog
     // isn't re-matched while the PTY output transitions.
     // (The tail buffer is cleared above, so re-detection is only possible
@@ -633,7 +655,9 @@ function analyzeAgentOutput(agentId: string): void {
   // Without this, subsequent analysis calls re-detect the stale dialog text in
   // the tail buffer and set hasQuestion=true, which disables the prompt
   // textarea and steals focus to the terminal.
-  if (hasQuestion && store.autoTrustFolders) {
+  // Also force this for coordinator sub-tasks with skipPermissions — they run
+  // autonomously and trust dialogs must never block them regardless of the setting.
+  if (hasQuestion && (store.autoTrustFolders || isAutoTrustForced(agentId))) {
     if (looksLikeTrustDialog(rawTail) && !TRUST_EXCLUSION_KEYWORDS.test(stripAnsi(rawTail))) {
       // Auto-trust may not have fired yet if this is the first analysis for
       // an active task that just became visible — trigger it now.
@@ -660,6 +684,7 @@ function analyzeAgentOutput(agentId: string): void {
 export function markAgentOutput(agentId: string, data: Uint8Array, taskId?: string): void {
   const now = Date.now();
   const state = getAgentState(agentId);
+  if (taskId && !state.taskId) state.taskId = taskId;
   state.lastDataAt = now;
 
   const text = state.decoder.decode(data, { stream: true });
@@ -678,7 +703,11 @@ export function markAgentOutput(agentId: string, data: Uint8Array, taskId?: stri
   // dialogs are accepted immediately without needing to switch to the task.
   // Active-task agents also get full analysis; background agents keep a faster
   // trust-only path plus a slower full analysis path for attention updates.
-  if (store.autoTrustFolders && !isAutoTrustPending(agentId) && !isActiveTask) {
+  if (
+    (store.autoTrustFolders || isAutoTrustForced(agentId)) &&
+    !isAutoTrustPending(agentId) &&
+    !isActiveTask
+  ) {
     const lastCheck = state.lastAutoTrustCheckAt ?? 0;
     if (now - lastCheck >= AUTO_TRUST_BG_THROTTLE_MS) {
       state.lastAutoTrustCheckAt = now;
@@ -820,8 +849,12 @@ export function getTaskAttentionState(taskId: string): TaskAttentionState {
 
   if (hasTaskAgentError(taskId)) return 'error';
 
+  if (task.needsReview) return 'review';
+
   const hasQuestion = hasRunningTaskActivity(taskId, isAgentAskingQuestion);
   if (hasQuestion) return 'needs_input';
+
+  if (task.needsReview) return 'review';
 
   const active = activeAgents(); // reactive read
   const hasActive = hasRunningTaskActivity(taskId, (id) => active.has(id));
@@ -833,7 +866,12 @@ export function getTaskAttentionState(taskId: string): TaskAttentionState {
 
 export function taskNeedsAttention(taskId: string): boolean {
   const attention = getTaskAttentionState(taskId);
-  return attention === 'active' || attention === 'needs_input' || attention === 'error';
+  return (
+    attention === 'active' ||
+    attention === 'needs_input' ||
+    attention === 'error' ||
+    attention === 'review'
+  );
 }
 
 export function getTaskDotStatus(taskId: string): TaskDotStatus {
@@ -842,6 +880,8 @@ export function getTaskDotStatus(taskId: string): TaskDotStatus {
   const active = activeAgents(); // reactive read
   const hasActive = hasRunningTaskActivity(taskId, (id) => active.has(id));
   if (hasActive) return 'busy';
+
+  if (task.needsReview) return 'review';
 
   const steps = task.stepsContent;
   if (steps && steps.length > 0) {

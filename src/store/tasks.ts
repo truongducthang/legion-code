@@ -28,6 +28,12 @@ import type {
 import { parseGitHubUrl, taskNameFromGitHubUrl } from '../lib/github-url';
 import type { Agent, Task, GitIsolationMode } from './types';
 import type { DockerSource } from '../lib/docker';
+import { COORDINATOR_PREAMBLE } from './coordinator-preamble';
+import {
+  clampCoordinatorConcurrentTasks,
+  DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+} from '../lib/coordinator-limits';
+import { getCoordinatorChildren, isCoordinatedChild } from './sidebar-order';
 
 export function initTaskInStore(
   taskId: string,
@@ -126,6 +132,9 @@ export interface CreateTaskOptions {
   dockerSource?: DockerSource;
   dockerImage?: string;
   stepsEnabled?: boolean;
+  coordinatorMode?: boolean;
+  propagateSkipPermissions?: boolean;
+  maxConcurrentTasks?: number;
 }
 
 export async function createTask(opts: CreateTaskOptions): Promise<string> {
@@ -178,7 +187,50 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
     worktreePath = projectRoot;
   }
 
+  // Generate agentId early so we can derive the Docker container name before StartMCPServer.
   const agentId = crypto.randomUUID();
+
+  // Start MCP server BEFORE adding task to store — the store update triggers
+  // a reactive render of TerminalView which spawns the PTY immediately.
+  // If MCP launch args aren't set yet, the coordinator agent starts without MCP wiring.
+  let mcpConfigPath: string | undefined;
+  let mcpLaunchArgs: string[] | undefined;
+  if (opts.coordinatorMode) {
+    // When running in Docker, sub-agents will be spawned via `docker exec` into this container.
+    const dockerContainerName = dockerMode ? `parallel-code-${agentId.slice(0, 12)}` : undefined;
+    try {
+      const mcpResult = await invoke<{
+        configPath: string | undefined;
+        mcpLaunchArgs?: string[];
+      }>(IPC.StartMCPServer, {
+        coordinatorTaskId: taskId,
+        projectId,
+        projectRoot,
+        worktreePath: gitIsolation === 'worktree' ? worktreePath : undefined,
+        skipPermissions: skipPermissions ?? false,
+        propagateSkipPermissions: opts.propagateSkipPermissions ?? false,
+        agentCommand: agentDef.command,
+        agentArgs: agentDef.args,
+        dockerContainerName,
+        dockerImage,
+      });
+      mcpConfigPath = mcpResult.configPath ?? undefined;
+      mcpLaunchArgs = mcpResult.mcpLaunchArgs;
+      console.warn('[MCP] Coordinator config path:', mcpConfigPath);
+      await invoke(IPC.MCP_CoordinatorRegistered, {
+        coordinatorTaskId: taskId,
+        projectId,
+        worktreePath,
+      });
+    } catch (err) {
+      console.warn('[MCP] Failed to start MCP server for coordinator:', err);
+      // Clean up worktree so we don't leave a dangling branch
+      if (gitIsolation === 'worktree') {
+        invoke(IPC.RemoveArenaWorktree, { projectRoot, branchName }).catch(() => {});
+      }
+      throw err;
+    }
+  }
 
   // Per-task steps tracking — explicit opt-in from dialog, or fall back to last-used preference
   const stepsEnabled = opts.stepsEnabled ?? store.showSteps;
@@ -205,7 +257,19 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
     shellAgentIds: [],
     notes: '',
     lastPrompt: '',
-    initialPrompt: effectivePrompt ?? undefined,
+    initialPrompt:
+      opts.coordinatorMode && effectivePrompt
+        ? COORDINATOR_PREAMBLE.replace(
+            /\{\{MAX_CONCURRENT\}\}/g,
+            String(
+              clampCoordinatorConcurrentTasks(
+                opts.maxConcurrentTasks ?? DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+              ),
+            ),
+          ) +
+          `Use \`${opts.baseBranch}\` as the baseBranch for all sub-tasks.\n\n` +
+          effectivePrompt
+        : (effectivePrompt ?? undefined),
     savedInitialPrompt: initialPrompt ?? undefined,
     stepsEnabled: stepsEnabled || undefined,
     skipPermissions: skipPermissions ?? undefined,
@@ -213,6 +277,15 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
     dockerSource: dockerSource ?? undefined,
     dockerImage: dockerImage ?? undefined,
     githubUrl,
+    coordinatorMode: opts.coordinatorMode || undefined,
+    propagateSkipPermissions: opts.coordinatorMode
+      ? (opts.propagateSkipPermissions ?? false)
+      : undefined,
+    controlledBy: opts.coordinatorMode ? 'coordinator' : undefined,
+    mcpConfigPath,
+    mcpLaunchArgs,
+    // Coordinator tasks call StartMCPServer before entering the store, so MCP is ready immediately.
+    mcpStartupStatus: opts.coordinatorMode ? ('ready' as const) : undefined,
   };
 
   const agent: Agent = {
@@ -228,6 +301,7 @@ export async function createTask(opts: CreateTaskOptions): Promise<string> {
   };
 
   initTaskInStore(taskId, task, agent, projectId, agentDef);
+
   saveState(); // fire-and-forget — errors handled internally
   return taskId;
 }
@@ -297,9 +371,29 @@ export async function createImportedTask(opts: CreateImportedTaskOptions): Promi
   return id;
 }
 
+/**
+ * Check if closing a coordinator would leave orphaned children.
+ * Returns a warning message if so, or null if safe to close.
+ */
+export function getCoordinatorCloseWarning(taskId: string): string | null {
+  const task = store.tasks[taskId];
+  if (!task?.coordinatorMode) return null;
+  const children = getCoordinatorChildren(taskId);
+  const count = children.active.length + children.collapsed.length;
+  if (count === 0) return null;
+  return `This coordinator has ${count} active sub-task(s). Closing it will detach them — they will become standalone tasks and continue running independently.`;
+}
+
 export async function closeTask(taskId: string): Promise<void> {
   const task = store.tasks[taskId];
   if (!task || task.closingStatus === 'closing' || task.closingStatus === 'removing') return;
+
+  const childIdsToDetach: string[] = task.coordinatorMode
+    ? (() => {
+        const children = getCoordinatorChildren(taskId);
+        return [...children.active, ...children.collapsed];
+      })()
+    : [];
 
   const agentIds = [...task.agentIds];
   const shellAgentIds = [...task.shellAgentIds];
@@ -337,7 +431,43 @@ export async function closeTask(taskId: string): Promise<void> {
       });
     }
 
-    // Backend cleanup succeeded — remove from UI
+    // Agents are dead — deregister the coordinator so no more MCP tool calls succeed.
+    // Done after kills (not before) so a failed close leaves the backend registered
+    // and the coordinator agent can still make tool calls until it's actually gone.
+    if (task.coordinatorMode) {
+      await invoke(IPC.MCP_CoordinatorDeregistered, { coordinatorTaskId: taskId }).catch((err) =>
+        console.warn('[MCP] Failed to deregister coordinator:', err),
+      );
+    }
+
+    // Notify backend to clean up this task from its coordinator's state map.
+    if (task.coordinatedBy) {
+      await invoke(IPC.MCP_CoordinatedTaskClosed, {
+        taskId,
+        coordinatorTaskId: task.coordinatedBy,
+      }).catch((err) => console.warn('[MCP] Failed to notify coordinator of task close:', err));
+    }
+
+    // Backend cleanup succeeded — detach children then remove coordinator from UI.
+    if (childIdsToDetach.length > 0) {
+      setStore(
+        produce((s) => {
+          for (const childId of childIdsToDetach) {
+            if (s.tasks[childId]) {
+              s.tasks[childId].coordinatedBy = undefined;
+              // Unlock the textarea — control bar disappears when coordinatedBy
+              // is cleared, so the task must also be unlocked.
+              s.tasks[childId].controlledBy = undefined;
+              // Clear stale coordinator wiring — the backend registry no longer
+              // knows about these tasks, so MCP tools would fail.
+              s.tasks[childId].mcpConfigPath = undefined;
+              s.tasks[childId].mcpStartupStatus = undefined;
+              s.tasks[childId].mcpStartupError = undefined;
+            }
+          }
+        }),
+      );
+    }
     removeTaskFromStore(taskId, [...agentIds, ...shellAgentIds]);
   } catch (err) {
     // Backend cleanup failed — show error, allow retry
@@ -453,6 +583,14 @@ export async function mergeTask(
     await Promise.allSettled(
       [...agentIds, ...shellAgentIds].map((id) => invoke(IPC.KillAgent, { agentId: id })),
     );
+    // Notify backend coordinator to remove this task from its state map so MCP
+    // tools (list_tasks, send_prompt, etc.) don't operate on a phantom task.
+    if (task.coordinatedBy) {
+      await invoke(IPC.MCP_CoordinatedTaskClosed, {
+        taskId,
+        coordinatorTaskId: task.coordinatedBy,
+      }).catch((err) => console.warn('[MCP] Failed to notify coordinator of task close:', err));
+    }
     removeTaskFromStore(taskId, [...agentIds, ...shellAgentIds]);
   }
 }
@@ -538,6 +676,19 @@ export function setPrefillPrompt(taskId: string, text: string): void {
   setStore('tasks', taskId, 'prefillPrompt', text);
 }
 
+export function clearStagedNotification(taskId: string): void {
+  setStore('tasks', taskId, 'stagedNotification', undefined);
+}
+
+export function setStagedNotificationUserEdited(taskId: string): void {
+  setStore(
+    produce((s) => {
+      const n = s.tasks[taskId]?.stagedNotification;
+      if (n) n.userEdited = true;
+    }),
+  );
+}
+
 export function reorderTask(fromIndex: number, toIndex: number): void {
   if (fromIndex === toIndex) return;
   setStore(
@@ -546,6 +697,48 @@ export function reorderTask(fromIndex: number, toIndex: number): void {
       if (fromIndex < 0 || fromIndex >= len || toIndex < 0 || toIndex >= len) return;
       const [moved] = s.taskOrder.splice(fromIndex, 1);
       s.taskOrder.splice(toIndex, 0, moved);
+    }),
+  );
+}
+
+/**
+ * Reorder a task using visible sidebar indices (excluding hidden coordinated children).
+ * Keeps coordinator+children blocks contiguous in taskOrder.
+ *
+ * @param movedId - ID of the task being dragged
+ * @param targetVisibleIdx - target position in the visible draggable order (after removal of movedId)
+ */
+export function reorderTaskVisually(movedId: string, targetVisibleIdx: number): void {
+  // Visible draggable order: active tasks excluding coordinated children
+  const draggableOrder = store.taskOrder.filter((id) => !isCoordinatedChild(id));
+
+  // After removing the moved item, find what task should come after it
+  const remainingDraggable = draggableOrder.filter((id) => id !== movedId);
+  const insertBeforeId = remainingDraggable[targetVisibleIdx] ?? null;
+
+  // Build the block to move: movedId + its active children in taskOrder sequence
+  const { active: activeChildren } = getCoordinatorChildren(movedId);
+  const childSet = new Set(activeChildren);
+  const block = [movedId, ...store.taskOrder.filter((id) => childSet.has(id))];
+
+  // Remove the block from taskOrder
+  const blockSet = new Set(block);
+  const remaining = store.taskOrder.filter((id) => !blockSet.has(id));
+
+  // Find where to insert in the remaining raw order
+  const rawInsertAt =
+    insertBeforeId !== null ? remaining.indexOf(insertBeforeId) : remaining.length;
+  const finalInsertAt = rawInsertAt === -1 ? remaining.length : rawInsertAt;
+
+  const newOrder = [
+    ...remaining.slice(0, finalInsertAt),
+    ...block,
+    ...remaining.slice(finalInsertAt),
+  ];
+
+  setStore(
+    produce((s) => {
+      s.taskOrder = newOrder;
     }),
   );
 }
@@ -630,6 +823,11 @@ export function hasDirectTask(projectId: string): boolean {
 export async function collapseTask(taskId: string): Promise<void> {
   const task = store.tasks[taskId];
   if (!task || task.collapsed || task.closingStatus) return;
+  if (task.coordinatorMode) return;
+  // Coordinated children must not be collapsed — the backend coordinator registry
+  // still holds the old agentId, so clearing agentIds here breaks send_prompt and
+  // idle detection. Block collapse entirely for tasks managed by a coordinator.
+  if (task.coordinatedBy) return;
 
   // Stop file watchers to prevent FSWatcher leak
   invoke(IPC.StopPlanWatcher, { taskId }).catch(console.error);
@@ -785,6 +983,367 @@ export function setNewTaskDropUrl(url: string): void {
 
 export function setNewTaskPrefillPrompt(prompt: string, projectId: string | null): void {
   setStore('newTaskPrefillPrompt', { prompt, projectId });
+}
+
+// --- MCP coordinator event listeners ---
+
+interface MCPTaskCreatedEvent {
+  taskId: string;
+  name: string;
+  projectId: string;
+  branchName: string;
+  worktreePath: string;
+  agentId: string;
+  coordinatorTaskId: string;
+  prompt?: string;
+  mcpConfigPath?: string;
+  preambleFileExistedBefore?: boolean;
+  agentCommand?: string;
+  agentArgs?: string[];
+  skipPermissions?: boolean;
+}
+
+/** Call once during app initialization to listen for coordinator events. */
+export function initMCPListeners(): () => void {
+  const cleanups: Array<() => void> = [];
+
+  cleanups.push(
+    window.electron.ipcRenderer.on(IPC.MCP_TaskCreated, (data: unknown) => {
+      const evt = data as MCPTaskCreatedEvent;
+      const task: Task = {
+        id: evt.taskId,
+        name: evt.name,
+        projectId: evt.projectId,
+        branchName: evt.branchName,
+        worktreePath: evt.worktreePath,
+        agentIds: [evt.agentId],
+        shellAgentIds: [],
+        notes: '',
+        lastPrompt: '',
+        gitIsolation: 'worktree',
+        coordinatedBy: evt.coordinatorTaskId,
+        controlledBy: 'coordinator',
+        // Use the same initialPrompt path as manually created tasks —
+        // PromptInput auto-delivers it with stability checks + quiescence.
+        initialPrompt: evt.prompt,
+        mcpConfigPath: evt.mcpConfigPath,
+        preambleFileExistedBefore: evt.preambleFileExistedBefore,
+        skipPermissions: evt.skipPermissions ?? false,
+        // Backend-spawned children are already attached to a live MCP server;
+        // restore-created MCP tasks start pending until hydration marks them ready.
+        mcpStartupStatus: 'ready' as const,
+      };
+
+      const cmd = evt.agentCommand ?? 'claude';
+      const matchedDef = store.availableAgents?.find((a) => a.command === cmd);
+      const agentDef = matchedDef ?? {
+        id: cmd,
+        name: cmd,
+        command: cmd,
+        args: evt.agentArgs ?? [],
+        resume_args: [],
+        skip_permissions_args: [],
+        description: '',
+      };
+
+      const agent: Agent = {
+        id: evt.agentId,
+        taskId: evt.taskId,
+        def: matchedDef ? { ...matchedDef, args: evt.agentArgs ?? matchedDef.args } : agentDef,
+        resumed: false,
+        status: 'running',
+        exitCode: null,
+        signal: null,
+        lastOutput: [],
+        generation: 0,
+        attachExisting: true,
+      };
+
+      let created = false;
+      setStore(
+        produce((s) => {
+          if (s.tasks[evt.taskId]) return; // idempotent — ignore duplicate events
+          s.tasks[evt.taskId] = task;
+          s.agents[evt.agentId] = agent;
+          s.taskOrder.push(evt.taskId);
+          created = true;
+        }),
+      );
+      if (created) {
+        markAgentSpawned(evt.agentId);
+        rescheduleTaskStatusPolling();
+      }
+    }),
+  );
+
+  cleanups.push(
+    window.electron.ipcRenderer.on(IPC.MCP_TaskClosed, (data: unknown) => {
+      const { taskId } = data as { taskId: string };
+      const task = store.tasks[taskId];
+      if (!task) return;
+
+      const agentIds = [...task.agentIds];
+      for (const agentId of agentIds) {
+        clearAgentActivity(agentId);
+      }
+
+      setStore(
+        produce((s) => {
+          delete s.tasks[taskId];
+          delete s.taskGitStatus[taskId];
+          // Compute neighbor BEFORE cleanupPanelEntries removes taskId from taskOrder
+          let neighbor: (typeof s.tasks)[string] | null = null;
+          if (s.activeTaskId === taskId) {
+            const idx = s.taskOrder.indexOf(taskId);
+            const filtered = s.taskOrder.filter((id) => id !== taskId);
+            const neighborIdx = idx <= 0 ? 0 : idx - 1;
+            const neighborId = filtered[neighborIdx] ?? null;
+            neighbor = neighborId ? s.tasks[neighborId] : null;
+          }
+          cleanupPanelEntries(s, taskId);
+          for (const agentId of agentIds) {
+            delete s.agents[agentId];
+          }
+          if (s.activeTaskId === taskId) {
+            s.activeTaskId = neighbor?.id ?? null;
+            s.activeAgentId = neighbor?.agentIds[0] ?? null;
+          }
+        }),
+      );
+      rescheduleTaskStatusPolling();
+    }),
+  );
+
+  cleanups.push(
+    window.electron.ipcRenderer.on(IPC.MCP_TaskCleanupFailed, (data: unknown) => {
+      const { taskId, error } = data as { taskId: string; error: string };
+      const task = store.tasks[taskId];
+      if (!task) return;
+      setStore('tasks', taskId, 'closingStatus', 'error');
+      setStore('tasks', taskId, 'closingError', error);
+    }),
+  );
+
+  cleanups.push(
+    window.electron.ipcRenderer.on(IPC.MCP_CoordinatorNotificationStaged, (data: unknown) => {
+      const evt = data as {
+        coordinatorTaskId: string;
+        batchId: string;
+        notificationIds: string[];
+        text: string;
+        autoFireAt: number;
+      };
+      const hasCoordinatorTask = Boolean(store.tasks[evt.coordinatorTaskId]);
+      if (!hasCoordinatorTask) {
+        logWarn('coordinator.notification.renderer', 'staged notification received', {
+          coordinatorTaskId: evt.coordinatorTaskId,
+          batchId: evt.batchId,
+          notificationIds: evt.notificationIds,
+          hadTask: false,
+        });
+        return;
+      }
+      const existing = store.tasks[evt.coordinatorTaskId].stagedNotification;
+      logWarn('coordinator.notification.renderer', 'staged notification received', {
+        coordinatorTaskId: evt.coordinatorTaskId,
+        batchId: evt.batchId,
+        notificationIds: evt.notificationIds,
+        previousBatchId: existing?.batchId,
+        hadTask: hasCoordinatorTask,
+        userEdited: existing?.userEdited ?? false,
+      });
+      const hasNewNotifications =
+        existing?.userEdited &&
+        evt.notificationIds.length > (existing.notificationIds?.length ?? 0);
+      if (hasNewNotifications && existing) {
+        // New completions arrived while the user was editing — preserve their edit,
+        // just update the batch metadata and show a hidden-count badge.
+        setStore('tasks', evt.coordinatorTaskId, 'stagedNotification', {
+          ...existing,
+          batchId: evt.batchId,
+          notificationIds: evt.notificationIds,
+          autoFireAt: evt.autoFireAt,
+          hiddenCompletionCount: (existing.hiddenCompletionCount ?? 0) + 1,
+        });
+      } else {
+        // Fresh staging or re-stage after user's edited send — reset to clean state
+        // so the notification text appears and auto-fire can trigger.
+        setStore('tasks', evt.coordinatorTaskId, 'stagedNotification', {
+          batchId: evt.batchId,
+          notificationIds: evt.notificationIds,
+          text: evt.text,
+          autoFireAt: evt.autoFireAt,
+          userEdited: false,
+        });
+      }
+    }),
+  );
+
+  cleanups.push(
+    window.electron.ipcRenderer.on(IPC.MCP_CoordinatorNotificationCleared, (data: unknown) => {
+      const evt = data as { coordinatorTaskId: string };
+      logWarn('coordinator.notification.renderer', 'staged notification cleared received', {
+        coordinatorTaskId: evt.coordinatorTaskId,
+        previousBatchId: store.tasks[evt.coordinatorTaskId]?.stagedNotification?.batchId,
+        hadTask: Boolean(store.tasks[evt.coordinatorTaskId]),
+      });
+      clearStagedNotification(evt.coordinatorTaskId);
+    }),
+  );
+
+  cleanups.push(
+    window.electron.ipcRenderer.on(IPC.MCP_CoordinatorOrphanedNotification, (data: unknown) => {
+      const evt = data as { subTaskId: string };
+      if (store.tasks[evt.subTaskId]) {
+        setStore('tasks', evt.subTaskId, 'needsReview', true);
+      }
+    }),
+  );
+
+  cleanups.push(
+    window.electron.ipcRenderer.on(IPC.MCP_TaskStateSync, (data: unknown) => {
+      const evt = data as {
+        taskId: string;
+        signalDoneReceived?: boolean;
+        signalDoneAt?: string;
+        signalDoneConsumed?: boolean;
+        needsReview?: boolean;
+        coordinatedBy?: string | null;
+        controlledBy?: 'coordinator' | 'human' | null;
+        mcpConfigPath?: string | null;
+        mcpStartupStatus?: 'pending' | 'ready' | 'error' | null;
+        mcpStartupError?: string | null;
+      };
+      if (store.tasks[evt.taskId]) {
+        if (evt.signalDoneReceived !== undefined)
+          setStore('tasks', evt.taskId, 'signalDoneReceived', evt.signalDoneReceived);
+        if (evt.signalDoneAt !== undefined)
+          setStore('tasks', evt.taskId, 'signalDoneAt', evt.signalDoneAt ?? undefined);
+        if (evt.signalDoneConsumed !== undefined)
+          setStore('tasks', evt.taskId, 'signalDoneConsumed', evt.signalDoneConsumed);
+        if (evt.needsReview !== undefined)
+          setStore('tasks', evt.taskId, 'needsReview', evt.needsReview);
+        if (evt.coordinatedBy !== undefined)
+          setStore('tasks', evt.taskId, 'coordinatedBy', evt.coordinatedBy ?? undefined);
+        if (evt.controlledBy !== undefined)
+          setStore('tasks', evt.taskId, 'controlledBy', evt.controlledBy ?? undefined);
+        if (evt.mcpConfigPath !== undefined)
+          setStore('tasks', evt.taskId, 'mcpConfigPath', evt.mcpConfigPath ?? undefined);
+        if (evt.mcpStartupStatus !== undefined)
+          setStore('tasks', evt.taskId, 'mcpStartupStatus', evt.mcpStartupStatus ?? undefined);
+        if (evt.mcpStartupError !== undefined)
+          setStore('tasks', evt.taskId, 'mcpStartupError', evt.mcpStartupError ?? undefined);
+      }
+    }),
+    window.electron.ipcRenderer.on(IPC.MCP_TaskHydrated, (data: unknown) => {
+      const evt = data as { taskId: string };
+      if (store.tasks[evt.taskId]) {
+        setStore('tasks', evt.taskId, 'mcpStartupStatus', 'ready');
+      }
+    }),
+  );
+
+  return () => {
+    for (const cleanup of cleanups) cleanup();
+  };
+}
+
+export function markTaskMcpPending(taskId: string): void {
+  if (store.tasks[taskId]) setStore('tasks', taskId, 'mcpStartupStatus', 'pending');
+}
+
+export function markTaskMcpReady(taskId: string): void {
+  if (store.tasks[taskId]) setStore('tasks', taskId, 'mcpStartupStatus', 'ready');
+}
+
+export function setTaskMcpLaunchArgs(taskId: string, args: string[] | undefined): void {
+  if (store.tasks[taskId]) setStore('tasks', taskId, 'mcpLaunchArgs', args);
+}
+
+export function markTaskMcpError(taskId: string, errorMsg: string): void {
+  if (!store.tasks[taskId]) return;
+  // eslint-disable-next-line no-control-regex -- strip escape chars to prevent injection
+  const safe = String(errorMsg).replace(/[\x00-\x1f\x7f]/g, '');
+  setStore('tasks', taskId, 'mcpStartupStatus', 'error');
+  setStore('tasks', taskId, 'mcpStartupError', safe);
+}
+
+export function retryTaskMcpStartup(taskId: string): Promise<void> {
+  const task = store.tasks[taskId];
+  if (!task) return Promise.resolve();
+  const projectRoot = store.projects.find((p) => p.id === task.projectId)?.path;
+  if (!projectRoot) {
+    markTaskMcpError(taskId, 'Project path not found');
+    return Promise.resolve();
+  }
+  markTaskMcpPending(taskId);
+
+  if (task.coordinatorMode) {
+    const agentDef = task.agentIds[0] ? store.agents[task.agentIds[0]]?.def : undefined;
+    const dockerContainerName =
+      task.dockerMode && task.agentIds[0]
+        ? `parallel-code-${task.agentIds[0].slice(0, 12)}`
+        : undefined;
+    return invoke<{ mcpLaunchArgs?: string[] }>(IPC.StartMCPServer, {
+      coordinatorTaskId: task.id,
+      projectId: task.projectId,
+      projectRoot,
+      worktreePath: task.gitIsolation === 'worktree' ? task.worktreePath : undefined,
+      skipPermissions: task.skipPermissions ?? false,
+      propagateSkipPermissions: task.propagateSkipPermissions ?? false,
+      agentCommand: agentDef?.command ?? 'claude',
+      agentArgs: agentDef?.args ?? [],
+      dockerContainerName,
+      dockerImage: task.dockerImage,
+    })
+      .then((result) => {
+        setTaskMcpLaunchArgs(taskId, result?.mcpLaunchArgs);
+        markTaskMcpReady(taskId);
+      })
+      .catch((err: unknown) => markTaskMcpError(taskId, String(err)));
+  }
+
+  if (task.coordinatedBy) {
+    const coordinator = store.tasks[task.coordinatedBy];
+    if (coordinator?.mcpStartupStatus === 'error') {
+      markTaskMcpError(taskId, 'Coordinator MCP failed — retry the coordinator task first');
+      return Promise.resolve();
+    }
+    return invoke(IPC.MCP_HydrateCoordinatedTask, {
+      id: task.id,
+      name: task.name,
+      projectId: task.projectId,
+      projectRoot,
+      branchName: task.branchName,
+      baseBranch: task.baseBranch,
+      worktreePath: task.worktreePath,
+      coordinatorTaskId: task.coordinatedBy,
+      controlledBy: task.controlledBy,
+      agentId: task.agentIds[0],
+      signalDoneAt: task.signalDoneAt,
+      signalDoneConsumed: task.signalDoneConsumed,
+      mcpConfigPath: task.mcpConfigPath,
+      preambleFileExistedBefore: task.preambleFileExistedBefore,
+    })
+      .then(() => markTaskMcpReady(taskId))
+      .catch((err: unknown) => markTaskMcpError(taskId, String(err)));
+  }
+  return Promise.resolve();
+}
+
+export function setTaskControl(taskId: string, who: 'coordinator' | 'human'): void {
+  const task = store.tasks[taskId];
+  const prev = task?.controlledBy;
+  setStore('tasks', taskId, 'controlledBy', who);
+  // Coordinator tasks manage their own control state in the frontend only.
+  // Sub-tasks need to notify the backend Coordinator so it can gate send_prompt.
+  if (!task?.coordinatorMode) {
+    invoke(IPC.MCP_ControlChanged, { taskId, controlledBy: who }).catch((err: unknown) => {
+      console.warn('[tasks] setTaskControl IPC failed, rolling back controlledBy', err);
+      setStore('tasks', taskId, 'controlledBy', prev);
+    });
+  }
+  void saveState();
 }
 
 export function setPlanContent(

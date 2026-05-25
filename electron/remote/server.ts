@@ -27,6 +27,41 @@ import {
   type SpawnResultMessage,
   type SpawnErrorCode,
 } from './protocol.js';
+import type { Coordinator } from '../mcp/coordinator.js';
+import { validateBranchName } from '../mcp/validation.js';
+
+// --- MCP log ring buffer ---
+export interface MCPLogEntry {
+  ts: number;
+  level: 'info' | 'error';
+  msg: string;
+}
+
+const MAX_LOG_ENTRIES = 200;
+const REST_COORDINATOR_SENTINEL = 'api';
+const mcpLogs: MCPLogEntry[] = [];
+
+function mcpLog(level: 'info' | 'error', msg: string): void {
+  const entry: MCPLogEntry = { ts: Date.now(), level, msg };
+  mcpLogs.push(entry);
+  if (mcpLogs.length > MAX_LOG_ENTRIES) mcpLogs.splice(0, mcpLogs.length - MAX_LOG_ENTRIES);
+  console.warn(`[MCP ${level}] ${msg}`);
+}
+
+export function getMCPLogs(): MCPLogEntry[] {
+  return mcpLogs.slice();
+}
+
+/** Strip the token query param before logging or displaying a server URL. */
+export function redactServerUrl(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl);
+    u.searchParams.delete('token');
+    return u.toString();
+  } catch {
+    return rawUrl;
+  }
+}
 
 const MIME: Record<string, string> = {
   '.html': 'text/html',
@@ -39,9 +74,13 @@ const MIME: Record<string, string> = {
 };
 
 interface RemoteServer {
+  bindHost: string;
   stop: () => Promise<void>;
   token: string;
+  subtaskToken: string;
+  mobileToken: string;
   port: number;
+  /** Mobile-scoped URL (embedded mobileToken). Safe to send to the renderer. */
   url: string;
   tailscaleUrl: string | null;
   wifiUrl: string | null;
@@ -136,6 +175,7 @@ const SPAWN_MIN_INTERVAL_MS = 2_000;
 
 export function startRemoteServer(opts: {
   port: number;
+  host?: string;
   staticDir: string;
   getTaskName: (taskId: string) => string;
   getAgentStatus: (agentId: string) => {
@@ -147,24 +187,39 @@ export function startRemoteServer(opts: {
   listProjects?: () => Promise<RemoteProject[]>;
   listBranches?: (projectRoot: string) => Promise<RemoteBranch[]>;
   spawnTask?: (req: SpawnTaskRequest) => Promise<SpawnResultMessage>;
-}): RemoteServer {
+  getCoordinator: () => Coordinator | null;
+}): Promise<RemoteServer> {
   const token = randomBytes(24).toString('base64url');
+  const subtaskToken = randomBytes(24).toString('base64url');
+  const mobileToken = randomBytes(24).toString('base64url');
   const ips = getNetworkIps();
 
   const tokenBuf = Buffer.from(token);
+  const subtaskTokenBuf = Buffer.from(subtaskToken);
+  const mobileTokenBuf = Buffer.from(mobileToken);
 
-  function safeCompare(candidate: string | null | undefined): boolean {
-    if (!candidate) return false;
+  function classifyCandidate(
+    candidate: string | null | undefined,
+  ): 'coordinator' | 'subtask' | 'mobile' | null {
+    if (!candidate) return null;
     const buf = Buffer.from(candidate);
-    if (buf.length !== tokenBuf.length) return false;
-    return timingSafeEqual(buf, tokenBuf);
+    if (buf.length === tokenBuf.length && timingSafeEqual(buf, tokenBuf)) return 'coordinator';
+    if (buf.length === subtaskTokenBuf.length && timingSafeEqual(buf, subtaskTokenBuf))
+      return 'subtask';
+    if (buf.length === mobileTokenBuf.length && timingSafeEqual(buf, mobileTokenBuf))
+      return 'mobile';
+    return null;
   }
 
-  function checkAuth(req: IncomingMessage): boolean {
+  function extractRawToken(req: IncomingMessage): string | null {
     const auth = req.headers.authorization;
-    if (auth?.startsWith('Bearer ') && safeCompare(auth.slice(7))) return true;
+    if (auth?.startsWith('Bearer ')) return auth.slice(7);
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-    return safeCompare(url.searchParams.get('token'));
+    return url.searchParams.get('token');
+  }
+
+  function classifyToken(req: IncomingMessage): 'coordinator' | 'subtask' | 'mobile' | null {
+    return classifyCandidate(extractRawToken(req));
   }
 
   const SECURITY_HEADERS: Record<string, string> = {
@@ -184,10 +239,33 @@ export function startRemoteServer(opts: {
 
     // --- API routes (require auth) ---
     if (url.pathname.startsWith('/api/')) {
-      if (!checkAuth(req)) {
+      const tokenClass = classifyToken(req);
+      if (tokenClass === null) {
         res.writeHead(401, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'unauthorized' }));
         return;
+      }
+      if (tokenClass === 'subtask') {
+        const allowed = req.method === 'POST' && /^\/api\/tasks\/[^/]+\/done$/.test(url.pathname);
+        if (!allowed) {
+          res.writeHead(403, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'forbidden' }));
+          return;
+        }
+      }
+      // Mobile token: read-only access to agent status only.
+      // Task/coordinator routes are intentionally excluded — the mobile view shows
+      // agent terminals, not coordinator sub-tasks, and the mobile token is embedded
+      // in a QR-code URL reachable by anyone on the local network.
+      if (tokenClass === 'mobile') {
+        const allowed =
+          req.method === 'GET' &&
+          (url.pathname === '/api/agents' || /^\/api\/agents\/[^/]+$/.test(url.pathname));
+        if (!allowed) {
+          res.writeHead(403, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'forbidden' }));
+          return;
+        }
       }
 
       if (url.pathname === '/api/agents' && req.method === 'GET') {
@@ -218,6 +296,397 @@ export function startRemoteServer(opts: {
           }),
         );
         return;
+      }
+
+      // --- Coordinator task API routes ---
+      const orch = opts.getCoordinator();
+      const isCoordinatorRoute =
+        url.pathname === '/api/tasks' ||
+        url.pathname === '/api/wait-signal' ||
+        url.pathname.startsWith('/api/tasks/');
+      if (!orch && isCoordinatorRoute) {
+        res.writeHead(503, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'coordinator not available' }));
+        return;
+      }
+      if (orch) {
+        // Helper to read JSON body
+        const jsonReply = (status: number, body: unknown) => {
+          if (res.headersSent) return;
+          res.writeHead(status, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(body));
+        };
+
+        const readBody = (): Promise<Record<string, unknown>> =>
+          new Promise((resolve, reject) => {
+            let data = '';
+            req.on('data', (chunk: Buffer) => {
+              data += chunk.toString();
+              if (data.length > 1_000_000) {
+                jsonReply(413, { error: 'Request body too large' });
+                reject(new Error('Body too large'));
+                req.destroy();
+              }
+            });
+            req.on('end', () => {
+              try {
+                resolve(data ? (JSON.parse(data) as Record<string, unknown>) : {});
+              } catch {
+                resolve({});
+              }
+            });
+            req.on('error', reject);
+          });
+
+        // Extract the coordinator ID from the header (set by MCP coordinator clients).
+        // Only honor it if it is a registered coordinator — prevents a caller from
+        // injecting an arbitrary ID to scope against another coordinator's tasks.
+        const callerCoordinatorId = (() => {
+          const h = req.headers['x-coordinator-id'];
+          if (typeof h !== 'string' || !h) return undefined;
+          return orch.isRegisteredCoordinator(h) ? h : undefined;
+        })();
+
+        // Coordinator-class tokens must include a valid X-Coordinator-Id so they can
+        // only access their own tasks. Without it, a stolen coordinator token could
+        // list and control all coordinators' tasks. This guard applies to ALL
+        // coordinator routes including wait-signal.
+        if (tokenClass === 'coordinator' && !callerCoordinatorId) {
+          jsonReply(403, { error: 'X-Coordinator-Id header required for task routes' });
+          return;
+        }
+
+        const ownedByCallerOrUnscoped = (taskCoordinatorId: string): boolean =>
+          !callerCoordinatorId || taskCoordinatorId === callerCoordinatorId;
+
+        const taskIdMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)(?:\/(.+))?$/);
+
+        if (url.pathname === '/api/wait-signal' && req.method === 'POST') {
+          readBody()
+            .then(async (body) => {
+              // Use the verified header coordinator ID exclusively — any caller with
+              // a valid coordinator token must supply X-Coordinator-Id (enforced above).
+              // Ignoring the body field matches the create_task pattern and prevents
+              // an unscoped body value from flowing unchecked to waitForSignalDone.
+              const coordinatorTaskId = callerCoordinatorId ?? REST_COORDINATOR_SENTINEL;
+              if (
+                body.timeoutMs !== undefined &&
+                (typeof body.timeoutMs !== 'number' || !Number.isFinite(body.timeoutMs))
+              )
+                return jsonReply(400, { error: 'timeoutMs must be a finite number' });
+              const requestId = typeof body.requestId === 'string' ? body.requestId : undefined;
+              mcpLog('info', `wait_for_signal_done coordinator=${coordinatorTaskId}`);
+              const result = await orch.waitForSignalDone(
+                coordinatorTaskId,
+                body.timeoutMs as number | undefined,
+                requestId,
+              );
+              mcpLog(
+                'info',
+                `wait_for_signal_done OK taskId=${result.taskId} remaining=${result.remaining}`,
+              );
+              jsonReply(200, result);
+            })
+            .catch((err) => {
+              mcpLog('error', `wait_for_signal_done FAIL: ${String(err)}`);
+              jsonReply(500, { error: String(err) });
+            });
+          return;
+        }
+
+        if (url.pathname === '/api/tasks' && req.method === 'POST') {
+          readBody()
+            .then(async (body) => {
+              if (typeof body.name !== 'string' || !body.name)
+                return jsonReply(400, { error: 'name must be a non-empty string' });
+              if (body.name.length > 200)
+                return jsonReply(400, { error: 'name must be 200 characters or fewer' });
+              // Strip control characters to prevent prompt injection via task name
+              // appearing verbatim in coordinator notification messages.
+              // eslint-disable-next-line no-control-regex
+              body.name = (body.name as string).replace(/[\x00-\x1f\x7f]/g, ' ').trim();
+              if (!body.name) return jsonReply(400, { error: 'name must be a non-empty string' });
+              if (body.prompt !== undefined && typeof body.prompt !== 'string')
+                return jsonReply(400, { error: 'prompt must be a string' });
+              if (body.projectId !== undefined && typeof body.projectId !== 'string')
+                return jsonReply(400, { error: 'projectId must be a string' });
+              if (body.gitIsolation !== undefined)
+                return jsonReply(400, {
+                  error: 'gitIsolation is not supported; only worktree isolation is implemented',
+                });
+              let baseBranch: string | undefined;
+              if (body.baseBranch !== undefined) {
+                try {
+                  baseBranch = validateBranchName(body.baseBranch, 'baseBranch');
+                } catch (e) {
+                  return jsonReply(400, { error: String(e) });
+                }
+              }
+              // For coordinator-token callers, the authoritative coordinator ID is
+              // the verified X-Coordinator-Id header (callerCoordinatorId). Reject
+              // any body value that tries to create a task under a different coordinator,
+              // since that would let coordinator A impersonate coordinator B.
+              if (
+                callerCoordinatorId &&
+                typeof body.coordinatorTaskId === 'string' &&
+                body.coordinatorTaskId !== callerCoordinatorId
+              ) {
+                return jsonReply(403, {
+                  error: 'coordinatorTaskId in body does not match X-Coordinator-Id header',
+                });
+              }
+              const coordinatorTaskId = callerCoordinatorId ?? REST_COORDINATOR_SENTINEL;
+              mcpLog('info', `create_task name=${body.name} baseBranch=${baseBranch ?? 'default'}`);
+              const result = await orch.createTask({
+                name: body.name as string,
+                prompt: body.prompt as string | undefined,
+                coordinatorTaskId,
+                projectId: body.projectId as string | undefined,
+                baseBranch,
+              });
+              mcpLog('info', `create_task OK id=${result.id}`);
+              jsonReply(201, orch.getTaskStatus(result.id));
+            })
+            .catch((err) => {
+              mcpLog('error', `create_task FAIL: ${String(err)}`);
+              jsonReply(500, { error: String(err) });
+            });
+          return;
+        }
+
+        if (url.pathname === '/api/tasks' && req.method === 'GET') {
+          mcpLog('info', 'list_tasks');
+          const all = orch.listTasks();
+          const tasks = callerCoordinatorId
+            ? all.filter((t) => t.coordinatorTaskId === callerCoordinatorId)
+            : all;
+          jsonReply(200, tasks);
+          return;
+        }
+
+        if (taskIdMatch && !taskIdMatch[2] && req.method === 'GET') {
+          const taskId = decodeURIComponent(taskIdMatch[1]);
+          mcpLog('info', `get_task_status id=${taskId}`);
+          const detail = orch.getTaskStatus(taskId);
+          if (!detail) {
+            jsonReply(404, { error: 'task not found' });
+          } else if (!ownedByCallerOrUnscoped(detail.coordinatorTaskId)) {
+            jsonReply(403, { error: 'forbidden' });
+          } else {
+            jsonReply(200, detail);
+          }
+          return;
+        }
+
+        if (taskIdMatch && taskIdMatch[2] === 'prompt' && req.method === 'POST') {
+          readBody()
+            .then(async (body) => {
+              const taskId = decodeURIComponent(taskIdMatch[1]);
+              if (typeof body.prompt !== 'string' || !body.prompt)
+                return jsonReply(400, { error: 'prompt must be a non-empty string' });
+              const detail = orch.getTaskStatus(taskId);
+              if (!detail) return jsonReply(404, { error: 'task not found' });
+              if (!ownedByCallerOrUnscoped(detail.coordinatorTaskId))
+                return jsonReply(403, { error: 'forbidden' });
+              mcpLog('info', `send_prompt id=${taskId}`);
+              await orch.sendPrompt(taskId, body.prompt);
+              jsonReply(200, { ok: true });
+            })
+            .catch((err) => {
+              mcpLog('error', `send_prompt FAIL: ${String(err)}`);
+              jsonReply(500, { error: String(err) });
+            });
+          return;
+        }
+
+        if (taskIdMatch && taskIdMatch[2] === 'wait' && req.method === 'POST') {
+          readBody()
+            .then(async (body) => {
+              const taskId = decodeURIComponent(taskIdMatch[1]);
+              if (
+                body.timeoutMs !== undefined &&
+                (typeof body.timeoutMs !== 'number' || !Number.isFinite(body.timeoutMs))
+              )
+                return jsonReply(400, { error: 'timeoutMs must be a finite number' });
+              const waitDetail = orch.getTaskStatus(taskId);
+              if (!waitDetail) return jsonReply(404, { error: 'task not found' });
+              if (!ownedByCallerOrUnscoped(waitDetail.coordinatorTaskId))
+                return jsonReply(403, { error: 'forbidden' });
+              mcpLog('info', `wait_for_idle id=${taskId}`);
+              const idleResult = await orch.waitForIdle(
+                taskId,
+                body.timeoutMs as number | undefined,
+              );
+              const status = orch.getTaskStatus(taskId);
+              mcpLog(
+                'info',
+                `wait_for_idle OK id=${taskId} status=${status?.status} reason=${idleResult.reason}`,
+              );
+              jsonReply(200, { status: status?.status ?? 'unknown', reason: idleResult.reason });
+            })
+            .catch((err) => {
+              mcpLog('error', `wait_for_idle FAIL: ${String(err)}`);
+              jsonReply(500, { error: String(err) });
+            });
+          return;
+        }
+
+        if (taskIdMatch && taskIdMatch[2] === 'review-merge' && req.method === 'POST') {
+          readBody()
+            .then(async (body) => {
+              const taskId = decodeURIComponent(taskIdMatch[1]);
+              if (body.squash !== undefined && typeof body.squash !== 'boolean')
+                return jsonReply(400, { error: 'squash must be a boolean' });
+              if (body.message !== undefined && typeof body.message !== 'string')
+                return jsonReply(400, { error: 'message must be a string' });
+              const rmDetail = orch.getTaskStatus(taskId);
+              if (!rmDetail) return jsonReply(404, { error: 'task not found' });
+              if (!ownedByCallerOrUnscoped(rmDetail.coordinatorTaskId))
+                return jsonReply(403, { error: 'forbidden' });
+              mcpLog('info', `review_and_merge_task id=${taskId}`);
+              const result = await orch.reviewAndMergeTask(taskId, {
+                squash: body.squash as boolean | undefined,
+                message: body.message as string | undefined,
+              });
+              mcpLog('info', `review_and_merge_task OK id=${taskId}`);
+              jsonReply(200, result);
+            })
+            .catch((err) => {
+              mcpLog('error', `review_and_merge_task FAIL: ${String(err)}`);
+              jsonReply(500, { error: String(err) });
+            });
+          return;
+        }
+
+        if (taskIdMatch && taskIdMatch[2] === 'diff' && req.method === 'GET') {
+          const taskId = decodeURIComponent(taskIdMatch[1]);
+          const diffDetail = orch.getTaskStatus(taskId);
+          if (!diffDetail) {
+            jsonReply(404, { error: 'task not found' });
+            return;
+          }
+          if (!ownedByCallerOrUnscoped(diffDetail.coordinatorTaskId)) {
+            jsonReply(403, { error: 'forbidden' });
+            return;
+          }
+          mcpLog('info', `get_task_diff id=${taskId}`);
+          orch
+            .getTaskDiff(taskId)
+            .then((result) => jsonReply(200, result))
+            .catch((err) => {
+              mcpLog('error', `get_task_diff FAIL: ${String(err)}`);
+              jsonReply(500, { error: String(err) });
+            });
+          return;
+        }
+
+        if (taskIdMatch && taskIdMatch[2] === 'output' && req.method === 'GET') {
+          const taskId = decodeURIComponent(taskIdMatch[1]);
+          const outputDetail = orch.getTaskStatus(taskId);
+          if (!outputDetail) {
+            jsonReply(404, { error: 'task not found' });
+            return;
+          }
+          if (!ownedByCallerOrUnscoped(outputDetail.coordinatorTaskId)) {
+            jsonReply(403, { error: 'forbidden' });
+            return;
+          }
+          mcpLog('info', `get_task_output id=${taskId}`);
+          try {
+            const output = orch.getTaskOutput(taskId);
+            jsonReply(200, { output });
+          } catch (err) {
+            mcpLog('error', `get_task_output FAIL: ${String(err)}`);
+            jsonReply(500, { error: String(err) });
+          }
+          return;
+        }
+
+        if (taskIdMatch && taskIdMatch[2] === 'done' && req.method === 'POST') {
+          const taskId = decodeURIComponent(taskIdMatch[1]);
+          const doneDetail = orch.getTaskStatus(taskId);
+          if (!doneDetail) return jsonReply(404, { error: 'task not found' });
+          if (!ownedByCallerOrUnscoped(doneDetail.coordinatorTaskId))
+            return jsonReply(403, { error: 'forbidden' });
+          // Subtask callers must provide the per-task X-Done-Token header so a compromised
+          // sub-task cannot signal completion for tasks it doesn't own.
+          // Coordinator-class callers are intentionally exempt: a coordinator token is
+          // scoped to its own sub-tasks via callerCoordinatorId (enforced above), and
+          // trusting coordinators to call signal_done on their children matches the
+          // intended authority model. The done-token is a sub-task ownership proof, not
+          // a coordinator authority proof.
+          if (tokenClass === 'subtask') {
+            const expected = orch.getTaskDoneToken(taskId);
+            const incoming = req.headers['x-done-token'];
+            if (
+              !expected ||
+              typeof incoming !== 'string' ||
+              incoming.length !== expected.length ||
+              !timingSafeEqual(Buffer.from(incoming), Buffer.from(expected))
+            ) {
+              return jsonReply(403, { error: 'forbidden' });
+            }
+          }
+          mcpLog('info', `signal_done id=${taskId}`);
+          orch.signalDone(taskId);
+          jsonReply(200, { ok: true });
+          return;
+        }
+
+        if (taskIdMatch && taskIdMatch[2] === 'merge' && req.method === 'POST') {
+          readBody()
+            .then(async (body) => {
+              const taskId = decodeURIComponent(taskIdMatch[1]);
+              if (body.squash !== undefined && typeof body.squash !== 'boolean')
+                return jsonReply(400, { error: 'squash must be a boolean' });
+              if (body.message !== undefined && typeof body.message !== 'string')
+                return jsonReply(400, { error: 'message must be a string' });
+              if (body.cleanup !== undefined && typeof body.cleanup !== 'boolean')
+                return jsonReply(400, { error: 'cleanup must be a boolean' });
+              const mergeDetail = orch.getTaskStatus(taskId);
+              if (!mergeDetail) return jsonReply(404, { error: 'task not found' });
+              if (!ownedByCallerOrUnscoped(mergeDetail.coordinatorTaskId))
+                return jsonReply(403, { error: 'forbidden' });
+              mcpLog('info', `merge_task id=${taskId} squash=${body.squash ?? false}`);
+              const result = await orch.mergeTask(taskId, {
+                squash: body.squash as boolean | undefined,
+                message: body.message as string | undefined,
+                cleanup: body.cleanup as boolean | undefined,
+              });
+              mcpLog('info', `merge_task OK id=${taskId}`);
+              jsonReply(200, result);
+            })
+            .catch((err) => {
+              mcpLog('error', `merge_task FAIL: ${String(err)}`);
+              jsonReply(500, { error: String(err) });
+            });
+          return;
+        }
+
+        if (taskIdMatch && !taskIdMatch[2] && req.method === 'DELETE') {
+          const taskId = decodeURIComponent(taskIdMatch[1]);
+          const closeDetail = orch.getTaskStatus(taskId);
+          if (!closeDetail) {
+            jsonReply(404, { error: 'task not found' });
+            return;
+          }
+          if (!ownedByCallerOrUnscoped(closeDetail.coordinatorTaskId)) {
+            jsonReply(403, { error: 'forbidden' });
+            return;
+          }
+          mcpLog('info', `close_task id=${taskId}`);
+          orch
+            .closeTask(taskId)
+            .then(() => {
+              mcpLog('info', `close_task OK id=${taskId}`);
+              jsonReply(200, { ok: true });
+            })
+            .catch((err) => {
+              mcpLog('error', `close_task FAIL: ${String(err)}`);
+              jsonReply(500, { error: String(err) });
+            });
+          return;
+        }
       }
 
       res.writeHead(404, { ...SECURITY_HEADERS, 'Content-Type': 'application/json' });
@@ -281,6 +750,7 @@ export function startRemoteServer(opts: {
 
   const clientSubs = new WeakMap<WebSocket, Map<string, (data: string) => void>>();
   const authenticatedClients = new Set<WebSocket>();
+  const clientTokenTypes = new Map<WebSocket, 'coordinator' | 'mobile'>();
   const authTimers = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
   // Per-client spawn guards: in-flight flag + last successful spawn timestamp.
   const spawnInFlight = new WeakMap<WebSocket, boolean>();
@@ -338,9 +808,11 @@ export function startRemoteServer(opts: {
   wss.on('connection', (ws, req) => {
     clientSubs.set(ws, new Map());
 
-    // Support legacy URL-based auth (verifyClient accepted all connections)
-    if (checkAuth(req)) {
+    // Support legacy URL-based auth (verifyClient accepted all connections).
+    // Only coordinator token grants WS access; subtask and mobile tokens are denied.
+    if (classifyToken(req) === 'coordinator') {
       authenticatedClients.add(ws);
+      clientTokenTypes.set(ws, 'coordinator');
       const list = buildAgentList(opts.getTaskName, opts.getAgentStatus);
       ws.send(JSON.stringify({ type: 'agents', list } satisfies ServerMessage));
     } else {
@@ -357,10 +829,12 @@ export function startRemoteServer(opts: {
       const msg = parseClientMessage(String(raw));
       if (!msg) return;
 
-      // Handle first-message auth
+      // Handle first-message auth. Only coordinator token grants WS access.
       if (msg.type === 'auth') {
-        if (safeCompare(msg.token)) {
+        const tokenType = classifyCandidate(msg.token);
+        if (tokenType === 'coordinator' || tokenType === 'mobile') {
           authenticatedClients.add(ws);
+          clientTokenTypes.set(ws, tokenType);
           const timer = authTimers.get(ws);
           if (timer) clearTimeout(timer);
           const list = buildAgentList(opts.getTaskName, opts.getAgentStatus);
@@ -375,6 +849,14 @@ export function startRemoteServer(opts: {
       if (!authenticatedClients.has(ws)) {
         ws.close(4001, 'Unauthorized');
         return;
+      }
+
+      // Mobile clients are read-only — block all PTY mutation messages
+      if (clientTokenTypes.get(ws) === 'mobile') {
+        if (msg.type === 'input' || msg.type === 'resize' || msg.type === 'kill') {
+          ws.close(4003, 'Forbidden');
+          return;
+        }
       }
 
       switch (msg.type) {
@@ -525,6 +1007,7 @@ export function startRemoteServer(opts: {
 
     ws.on('close', () => {
       authenticatedClients.delete(ws);
+      clientTokenTypes.delete(ws);
       const timer = authTimers.get(ws);
       if (timer) clearTimeout(timer);
       const subs = clientSubs.get(ws);
@@ -536,28 +1019,31 @@ export function startRemoteServer(opts: {
     });
   });
 
+  const bindHost = opts.host ?? '0.0.0.0';
+
   server.on('error', (err) => {
     console.error('[remote] Server error:', err.message);
   });
-  server.listen(opts.port, '0.0.0.0', () => {
-    /* bind confirmed */
-  });
 
   const primaryIp = ips.wifi ?? ips.tailscale ?? '127.0.0.1';
-  const url = `http://${primaryIp}:${opts.port}?token=${token}`;
+  // url embeds the mobileToken — safe to surface in UI. Coordinator token never leaves the main process.
+  const url = `http://${primaryIp}:${opts.port}?token=${mobileToken}`;
 
-  return {
+  const result: RemoteServer = {
     token,
+    subtaskToken,
+    mobileToken,
     port: opts.port,
+    bindHost,
     url,
     /** Re-detect network IPs so newly connected interfaces (e.g. Tailscale) are picked up. */
     get wifiUrl() {
       const cur = getNetworkIps();
-      return cur.wifi ? `http://${cur.wifi}:${opts.port}?token=${token}` : null;
+      return cur.wifi ? `http://${cur.wifi}:${opts.port}?token=${mobileToken}` : null;
     },
     get tailscaleUrl() {
       const cur = getNetworkIps();
-      return cur.tailscale ? `http://${cur.tailscale}:${opts.port}?token=${token}` : null;
+      return cur.tailscale ? `http://${cur.tailscale}:${opts.port}?token=${mobileToken}` : null;
     },
     connectedClients: () => authenticatedClients.size,
     addressInfo: () => {
@@ -579,6 +1065,18 @@ export function startRemoteServer(opts: {
         });
       }),
   };
+
+  return new Promise<RemoteServer>((resolve, reject) => {
+    const onError = (err: Error) => reject(err);
+    server.once('error', onError);
+    server.listen(opts.port, bindHost, () => {
+      server.removeListener('error', onError);
+      // Capture the actual bound port (important when opts.port === 0)
+      const addr = server.address();
+      if (addr && typeof addr === 'object') result.port = addr.port;
+      resolve(result);
+    });
+  });
 }
 
 /** Maximum size for a POST body to /api/telegram-auth. Telegram's initData

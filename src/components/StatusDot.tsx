@@ -7,6 +7,7 @@ function getDotColor(status: TaskDotStatus, attention?: TaskAttentionState): str
   if (attention === 'active') return theme.accent;
   if (attention === 'needs_input') return theme.warning;
   if (attention === 'error') return theme.error;
+  if (attention === 'review') return '#c084fc';
   if (attention === 'ready') return theme.success;
   return { busy: theme.fgMuted, waiting: '#e5a800', ready: theme.success, review: '#c084fc' }[
     status
@@ -20,7 +21,9 @@ function getDotShadow(attention?: TaskAttentionState): string | undefined {
       ? theme.accent
       : attention === 'needs_input'
         ? theme.warning
-        : theme.error;
+        : attention === 'review'
+          ? '#c084fc'
+          : theme.error;
   return `0 0 0 2px color-mix(in srgb, ${color} 22%, transparent)`;
 }
 

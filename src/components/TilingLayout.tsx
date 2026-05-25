@@ -18,6 +18,7 @@ import {
   taskNeedsAttention,
   getPanelUserSize,
   setPanelUserSize,
+  deletePanelUserSize,
 } from '../store/store';
 import { closeTask } from '../store/tasks';
 import { TaskPanel } from './TaskPanel';
@@ -594,6 +595,15 @@ export function TilingLayout() {
                       <div
                         class={`resize-handle resize-handle-h ${dragging() === i() ? 'dragging' : ''}`}
                         onMouseDown={(e) => handleDragStart(i(), e)}
+                        onDblClick={() => {
+                          if (dragging() !== null) return;
+                          const panels = panelChildren();
+                          const left = panels[i()];
+                          const right = panels[i() + 1];
+                          if (!left || !right) return;
+                          deletePanelUserSize([`tiling:${left.id}`, `tiling:${right.id}`]);
+                          requestAnimationFrame(() => updateViewportState());
+                        }}
                       />
                     </Show>
                   </>

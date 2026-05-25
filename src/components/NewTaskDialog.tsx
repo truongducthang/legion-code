@@ -1,4 +1,4 @@
-import { createSignal, createEffect, createUniqueId, Show, For, onCleanup } from 'solid-js';
+import { createSignal, createEffect, createUniqueId, Show, onCleanup } from 'solid-js';
 import { Dialog } from './Dialog';
 import { invoke } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
@@ -17,7 +17,6 @@ import {
   setPrefillPrompt,
   setDockerAvailable,
   setDockerImage,
-  showNotification,
 } from '../store/store';
 import type { GitIsolationMode } from '../store/types';
 import { toBranchName, sanitizeBranchPrefix } from '../lib/branch-name';
@@ -25,12 +24,20 @@ import { SegmentedButtons } from './SegmentedButtons';
 import { autoTaskNameFromPrompt } from '../lib/clean-task-name';
 import { extractGitHubUrl } from '../lib/github-url';
 import { theme, sectionLabelStyle, bannerStyle } from '../lib/theme';
+import { isMac } from '../lib/platform';
 import { AgentSelector } from './AgentSelector';
 import { BranchPrefixField } from './BranchPrefixField';
+import { BranchCombobox } from './BranchCombobox';
 import { ProjectSelect } from './ProjectSelect';
 import { SymlinkDirPicker } from './SymlinkDirPicker';
 import type { AgentDef } from '../ipc/types';
 import { DEFAULT_DOCKER_IMAGE, PROJECT_DOCKERFILE_RELATIVE_PATH } from '../lib/docker';
+import {
+  clampCoordinatorConcurrentTasks,
+  DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+  MAX_COORDINATOR_CONCURRENT_TASKS,
+  MIN_COORDINATOR_CONCURRENT_TASKS,
+} from '../lib/coordinator-limits';
 
 interface NewTaskDialogProps {
   open: boolean;
@@ -50,6 +57,9 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
   const [baseBranch, setBaseBranch] = createSignal('');
   const [branches, setBranches] = createSignal<string[]>([]);
   const [branchesLoading, setBranchesLoading] = createSignal(false);
+  const [branchesError, setBranchesError] = createSignal(false);
+  // Bumped by the Retry button to re-run the branch-fetch effect.
+  const [branchRetryToken, setBranchRetryToken] = createSignal(0);
   const [stepsEnabled, setStepsEnabled] = createSignal(store.showSteps);
   const [skipPermissions, setSkipPermissions] = createSignal(false);
   const [dockerMode, setDockerMode] = createSignal(false);
@@ -62,9 +72,25 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
     imageTag: string;
     buildContext: string;
   } | null>(null);
+  const [coordinatorMode, setCoordinatorMode] = createSignal(false);
+  const [propagateSkipPermissions, setPropagateSkipPermissions] = createSignal(false);
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = createSignal(
+    DEFAULT_COORDINATOR_CONCURRENT_TASKS,
+  );
+  const hasActiveCoordinator = () =>
+    Object.values(store.tasks).some(
+      (t) => t.coordinatorMode && !t.closingStatus && t.projectId === selectedProjectId(),
+    );
+  createEffect(() => {
+    selectedProjectId();
+    if (hasActiveCoordinator()) {
+      setCoordinatorMode(false);
+    }
+  });
   const [branchPrefix, setBranchPrefix] = createSignal('');
   let promptRef!: HTMLTextAreaElement;
   const titleId = createUniqueId();
+  const branchInputId = createUniqueId();
   let formRef!: HTMLFormElement;
   let buildOutputRef!: HTMLPreElement;
 
@@ -127,12 +153,14 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
     setLoading(false);
     setGitIsolation('worktree');
     setSkipPermissions(false);
+    setPropagateSkipPermissions(false);
     setDockerMode(false);
     setDockerImageReady(null);
     setDockerBuilding(false);
     setDockerBuildOutput('');
     setDockerBuildError('');
     setProjectDockerfile(null);
+    setCoordinatorMode(false);
 
     void (async () => {
       // Check Docker availability in background
@@ -234,6 +262,8 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
     const open = props.open;
     const pid = selectedProjectId();
     const projectPath = pid ? getProjectPath(pid) : undefined;
+    // Read the retry token so the Retry button can re-run this effect.
+    branchRetryToken();
     let cancelled = false;
 
     const isGit = pid ? projectIsGitRepo(pid) : true;
@@ -242,6 +272,7 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
       setBranches([]);
       setBaseBranch('');
       setBranchesLoading(false);
+      setBranchesError(false);
       // D-03: onCleanup registered synchronously even on early return
       onCleanup(() => {
         cancelled = true;
@@ -249,9 +280,13 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
       return;
     }
 
-    // D-01: Clear list and show spinner immediately on every open
+    // D-01: Clear list and show spinner immediately on every open. Also clear
+    // the committed branch so the combobox does not display the previous
+    // project's branch as the current value during the fetch window.
     setBranches([]);
+    setBaseBranch('');
     setBranchesLoading(true);
+    setBranchesError(false);
 
     const doFetch = async () => {
       const [branchList, mainBranch] = await Promise.all([
@@ -274,7 +309,10 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
       } catch (err) {
         if (cancelled) return;
         setBranchesLoading(false);
-        showNotification(`Failed to load branches: ${String(err)}`);
+        // Inline error + Retry surfaces this in the dialog; no toast needed.
+        // Keep the detail in the console for diagnostics.
+        setBranchesError(true);
+        console.error('Failed to load branches:', err);
       }
     });
 
@@ -450,7 +488,11 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
 
   const canSubmit = () => {
     const hasContent = !!effectiveName();
-    return hasContent && !!selectedProjectId() && !loading();
+    // Block submit while branches load — and require a resolved base branch
+    // for git projects — so a task can't be created with a stale or empty
+    // base branch (e.g. after a failed branch fetch).
+    const branchOk = isNonGitProject() || (!!baseBranch() && !branchesError());
+    return hasContent && !!selectedProjectId() && !loading() && !branchesLoading() && branchOk;
   };
 
   async function handleSubmit(e: Event) {
@@ -468,6 +510,10 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
     const projectId = selectedProjectId();
     if (!projectId) {
       setError('Select a project');
+      return;
+    }
+    if (coordinatorMode() && hasActiveCoordinator()) {
+      setError('Only one coordinator per project can be active at a time');
       return;
     }
 
@@ -530,6 +576,11 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
           : undefined,
         dockerImage: dockerMode()
           ? (projDocker?.imageTag ?? (store.dockerImage || DEFAULT_DOCKER_IMAGE))
+          : undefined,
+        coordinatorMode: coordinatorMode() || undefined,
+        propagateSkipPermissions: coordinatorMode() ? propagateSkipPermissions() : undefined,
+        maxConcurrentTasks: coordinatorMode()
+          ? clampCoordinatorConcurrentTasks(maxConcurrentTasks())
           : undefined,
       });
       // Drop flow: prefill prompt without auto-sending
@@ -616,7 +667,11 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
                   if (canSubmit()) handleSubmit(e);
                 }
               }}
-              placeholder="What should the agent work on?"
+              placeholder={
+                coordinatorMode()
+                  ? 'Example: Work through the items in /path/to/todos.md. Only work from that file. Use <branch> as the baseBranch for all sub-tasks.'
+                  : 'What should the agent work on?'
+              }
               rows={3}
               style={{
                 background: theme.bgInput,
@@ -758,7 +813,9 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
               data-nav-field="base-branch"
               style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}
             >
-              <label style={sectionLabelStyle}>
+              {/* On a load failure the combobox is unmounted, so only point
+                  the label at it while it is actually rendered. */}
+              <label for={branchesError() ? undefined : branchInputId} style={sectionLabelStyle}>
                 {gitIsolation() === 'worktree' ? 'Base branch' : 'Branch'}
                 <Show when={branchesLoading()}>
                   {' '}
@@ -769,25 +826,49 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
                   />
                 </Show>
               </label>
-              <select
-                class="input-field"
-                value={baseBranch()}
-                onChange={(e) => setBaseBranch(e.currentTarget.value)}
-                disabled={branchesLoading()}
-                style={{
-                  background: theme.bgInput,
-                  border: `1px solid ${theme.border}`,
-                  'border-radius': '8px',
-                  padding: '10px 14px',
-                  color: theme.fg,
-                  'font-size': '14px',
-                  'font-family': "'JetBrains Mono', monospace",
-                  outline: 'none',
-                  opacity: branchesLoading() ? '0.5' : '1',
-                }}
+              {/* On a load failure, swap the empty picker for the error +
+                  Retry — an empty combobox reading "No matching branches"
+                  would misrepresent a fetch failure as an empty repo. */}
+              <Show
+                when={!branchesError()}
+                fallback={
+                  <div
+                    role="alert"
+                    style={{
+                      display: 'flex',
+                      'align-items': 'center',
+                      gap: '8px',
+                      'font-size': '12px',
+                      color: theme.error,
+                    }}
+                  >
+                    <span>Couldn't load branches.</span>
+                    <button
+                      type="button"
+                      onClick={() => setBranchRetryToken((n) => n + 1)}
+                      style={{
+                        background: 'transparent',
+                        border: `1px solid ${theme.border}`,
+                        'border-radius': '6px',
+                        padding: '3px 10px',
+                        color: theme.fg,
+                        'font-size': '12px',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                }
               >
-                <For each={branches()}>{(b) => <option value={b}>{b}</option>}</For>
-              </select>
+                <BranchCombobox
+                  id={branchInputId}
+                  branches={branches()}
+                  value={baseBranch()}
+                  onChange={setBaseBranch}
+                  loading={branchesLoading()}
+                />
+              </Show>
             </div>
           </Show>
 
@@ -907,6 +988,13 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
                       Agent credentials are shared across containers.
                     </Show>
                   </div>
+                  <Show when={coordinatorMode() && isMac}>
+                    <div style={{ ...bannerStyle(theme.warning), 'font-size': '12px' }}>
+                      Coordinator + Docker on macOS: the MCP server binds to all network interfaces
+                      so sub-task containers can reach it via host.docker.internal. The port is
+                      reachable from other hosts on your local network (token-protected).
+                    </div>
+                  </Show>
                   <Show when={projectDockerfile()}>
                     <div
                       style={{
@@ -1038,6 +1126,129 @@ export function NewTaskDialog(props: NewTaskDialogProps) {
             </Show>
           </div>
           {/* end checkboxes group */}
+
+          {/* Coordinator mode toggle — below skip-permissions so enabling skip-perms
+              doesn't cause items to appear above the checkbox you just clicked */}
+          <Show when={store.coordinatorModeEnabled}>
+            <div
+              data-nav-field="coordinator-mode"
+              style={{ display: 'flex', 'flex-direction': 'column', gap: '8px' }}
+            >
+              <label
+                style={{
+                  display: 'flex',
+                  'align-items': 'center',
+                  gap: '8px',
+                  'font-size': '13px',
+                  color: theme.fg,
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={coordinatorMode()}
+                  disabled={hasActiveCoordinator()}
+                  onChange={(e) =>
+                    !hasActiveCoordinator() && setCoordinatorMode(e.currentTarget.checked)
+                  }
+                  style={{
+                    'accent-color': theme.accent,
+                    cursor: hasActiveCoordinator() ? 'not-allowed' : 'inherit',
+                    opacity: hasActiveCoordinator() ? '0.5' : '1',
+                  }}
+                  title={
+                    hasActiveCoordinator()
+                      ? 'Only one coordinator per project can be active at a time'
+                      : undefined
+                  }
+                />
+                Coordinator mode
+              </label>
+              <Show when={coordinatorMode()}>
+                <div
+                  style={{
+                    'font-size': '12px',
+                    color: theme.warning,
+                    background: `color-mix(in srgb, ${theme.warning} 8%, transparent)`,
+                    padding: '8px 12px',
+                    'border-radius': '8px',
+                    border: `1px solid color-mix(in srgb, ${theme.warning} 20%, transparent)`,
+                  }}
+                >
+                  This agent will be able to create tasks, send prompts, and merge branches
+                  automatically via MCP tools. The remote server will be started automatically.
+                </div>
+                <label
+                  style={{
+                    display: 'flex',
+                    'align-items': 'center',
+                    gap: '8px',
+                    'font-size': '13px',
+                    color: theme.fg,
+                    'padding-left': '4px',
+                  }}
+                >
+                  Max concurrent sub-tasks:
+                  <input
+                    type="number"
+                    min={MIN_COORDINATOR_CONCURRENT_TASKS}
+                    max={MAX_COORDINATOR_CONCURRENT_TASKS}
+                    value={maxConcurrentTasks()}
+                    onInput={(e) => {
+                      const v = parseInt(e.currentTarget.value, 10);
+                      if (!isNaN(v)) setMaxConcurrentTasks(clampCoordinatorConcurrentTasks(v));
+                    }}
+                    style={{
+                      width: '60px',
+                      background: theme.bgInput,
+                      color: theme.fg,
+                      border: `1px solid ${theme.border}`,
+                      'border-radius': '6px',
+                      padding: '4px 8px',
+                      'font-size': '13px',
+                    }}
+                  />
+                </label>
+                <Show when={agentSupportsSkipPermissions() && skipPermissions()}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      'align-items': 'center',
+                      gap: '8px',
+                      'font-size': '13px',
+                      color: theme.fg,
+                      cursor: 'pointer',
+                      'padding-left': '4px',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={propagateSkipPermissions()}
+                      onChange={(e) => setPropagateSkipPermissions(e.currentTarget.checked)}
+                      style={{ 'accent-color': theme.accent, cursor: 'inherit' }}
+                    />
+                    Propagate skip-permissions to sub-tasks
+                  </label>
+                  <Show when={propagateSkipPermissions()}>
+                    <div
+                      style={{
+                        'font-size': '12px',
+                        color: theme.warning,
+                        background: `color-mix(in srgb, ${theme.warning} 8%, transparent)`,
+                        padding: '8px 12px',
+                        'border-radius': '8px',
+                        border: `1px solid color-mix(in srgb, ${theme.warning} 20%, transparent)`,
+                      }}
+                    >
+                      All sub-tasks created by this coordinator will inherit{' '}
+                      <strong>--dangerously-skip-permissions</strong> and run without confirmation
+                      prompts.
+                    </div>
+                  </Show>
+                </Show>
+              </Show>
+            </div>
+          </Show>
 
           <Show when={ignoredDirs().length > 0 && gitIsolation() === 'worktree'}>
             <SymlinkDirPicker

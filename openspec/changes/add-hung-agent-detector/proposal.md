@@ -5,7 +5,7 @@
 An agent that has stopped producing PTY output isn't always an agent
 that has finished. Sometimes the CLI is waiting on a prompt the user
 forgot about, sometimes a child process has wedged, sometimes the
-network call the agent is making has hung. To Parallel Code today
+network call the agent is making has hung. To Legion today
 all three look identical: the PTY is "running", the agent card sits
 quietly, and the slot is wasted until the user happens to click in
 and notice nothing's happened in ten minutes.

@@ -28,6 +28,8 @@ import { IPC } from '../../electron/ipc/channels';
 import { createHighlightedMarkdown } from '../lib/marked-shiki';
 import type { Task } from '../store/types';
 import type { AgentDef } from '../ipc/types';
+import type { PromptInputHandle } from './PromptInput';
+import { buildTaskAgentArgs } from '../lib/agent-args';
 
 function aiTerminalPanelId(agentId: string): string {
   return `ai-terminal:${agentId}`;
@@ -40,6 +42,7 @@ interface TaskAITerminalProps {
   isActive: boolean;
   selectedAgentId: string;
   onSelectAgent?: (agentId: string) => void;
+  promptHandle: PromptInputHandle | undefined;
   /** Receives a function that scrolls the AI terminal to the moment a given step
    *  index was recorded, along with the first step index that is jumpable — steps
    *  below that index were written before the current terminal mount and have no
@@ -48,11 +51,10 @@ interface TaskAITerminalProps {
     jump: ((stepIndex: number) => boolean) | undefined,
     firstJumpableIndex: number,
   ) => void;
+  onFileLink?: (filePath: string) => void;
 }
 
 export function TaskAITerminal(props: TaskAITerminalProps) {
-  onCleanup(() => unregisterFocusFn(`${props.task.id}:ai-terminal`));
-
   // Step bookmarks — TerminalView hands us a mark/jump API once the xterm
   // instance is ready. We only mark steps that arrive while the terminal is live;
   // historical steps written before this mount aren't jumpable (anchoring them
@@ -76,9 +78,6 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
       return;
     }
 
-    // Skip historical steps — we can't know which terminal line each one was
-    // originally written at, and anchoring them all at the current line would
-    // silently mis-route every jump.
     const firstJumpable = untrack(() => props.task.stepsContent?.length ?? 0);
     lastMarkedLen = firstJumpable;
     props.onStepJumpReady?.(api.jump, firstJumpable);
@@ -192,20 +191,18 @@ export function TaskAITerminal(props: TaskAITerminalProps) {
         style={{
           height: '100%',
           position: 'relative',
-          background: 'transparent',
+          background: theme.taskPanelBg,
           display: 'flex',
           'flex-direction': 'column',
         }}
         onClick={() => setTaskFocusedPanel(props.task.id, aiTerminalPanelId(props.selectedAgentId))}
       >
         <InfoBar
-          compact
           allowOverflow
           title={props.task.lastPrompt || infoBarStatus().title}
           onDblClick={() => {
-            if (props.task.lastPrompt) {
-              void navigator.clipboard.writeText(props.task.lastPrompt);
-            }
+            if (props.task.lastPrompt && props.promptHandle && !props.promptHandle.getText())
+              props.promptHandle.setText(props.task.lastPrompt);
           }}
         >
           <div
@@ -501,6 +498,8 @@ function AgentTerminalPane(props: {
         'min-width': props.canClose ? '260px' : '0',
         overflow: 'hidden',
         position: 'relative',
+        display: 'flex',
+        'flex-direction': 'column',
         background: theme.taskPanelBg,
         border: '1px solid transparent',
       }}
@@ -589,19 +588,28 @@ function AgentTerminalPane(props: {
                 agentId={a().id}
                 isFocused={isPanelFocused(props.task.id, aiTerminalPanelId(props.agentId))}
                 command={a().def.command}
-                args={[
-                  ...(a().resumed && a().def.resume_args?.length
-                    ? (a().def.resume_args ?? [])
-                    : a().def.args),
-                  ...(props.task.skipPermissions && a().def.skip_permissions_args?.length
-                    ? (a().def.skip_permissions_args ?? [])
-                    : []),
-                ]}
+                args={buildTaskAgentArgs(a().def, props.task, a().resumed)}
                 cwd={props.task.worktreePath}
                 stepsEnabled={props.task.stepsEnabled}
-                dockerMode={props.task.dockerMode}
-                dockerImage={props.task.dockerImage}
-                spawnDelayMs={a().spawnDelayMs}
+                dockerMode={
+                  props.task.dockerMode ||
+                  Boolean(
+                    props.task.coordinatedBy && store.tasks[props.task.coordinatedBy]?.dockerMode,
+                  )
+                }
+                dockerImage={
+                  props.task.dockerMode
+                    ? props.task.dockerImage
+                    : props.task.coordinatedBy
+                      ? store.tasks[props.task.coordinatedBy]?.dockerImage
+                      : undefined
+                }
+                dockerMountWorktreeParent={
+                  (props.task.coordinatorMode && props.task.dockerMode) ||
+                  Boolean(
+                    props.task.coordinatedBy && store.tasks[props.task.coordinatedBy]?.dockerMode,
+                  )
+                }
                 attachExisting={a().attachExisting}
                 preserveOnWindowUnload
                 onExit={(code) => markAgentExited(a().id, code)}

@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'legion-token';
+const TOKEN_KEY = 'legion-code-token';
 
 interface TelegramWebApp {
   initData?: string;

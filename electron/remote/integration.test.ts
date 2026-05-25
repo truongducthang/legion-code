@@ -71,7 +71,7 @@ let workdir: string;
 let repoRoot: string;
 let staticDir: string;
 let port: number;
-let server: ReturnType<typeof startRemoteServer>;
+let server: Awaited<ReturnType<typeof startRemoteServer>>;
 let projectsByRoot: Map<string, RemoteProject>;
 let lastBranchesByRoot: Map<string, Set<string>>;
 let taskNames: Map<string, string>;
@@ -118,7 +118,7 @@ beforeEach(async () => {
     defaultBaseBranch: 'main',
   });
 
-  server = startRemoteServer({
+  server = await startRemoteServer({
     port,
     staticDir,
     getTaskName: (taskId: string) => taskNames.get(taskId) ?? taskId,
@@ -132,6 +132,7 @@ beforeEach(async () => {
     },
     spawnTask: async (req: SpawnTaskRequest) =>
       runMobileSpawn({} as never, req, projectsByRoot, lastBranchesByRoot, taskNames),
+    getCoordinator: () => null,
   });
 });
 

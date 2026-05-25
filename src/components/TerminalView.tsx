@@ -1,4 +1,4 @@
-import { onMount, onCleanup, createEffect } from 'solid-js';
+import { onMount, onCleanup, createEffect, Show } from 'solid-js';
 import { Terminal, type IMarker } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -7,16 +7,17 @@ import { invoke, fireAndForget, Channel } from '../lib/ipc';
 import { IPC } from '../../electron/ipc/channels';
 import { getTerminalFontFamily } from '../lib/fonts';
 import { TERMINAL_SCROLLBACK_LINES } from '../lib/terminalConstants';
-import { getTerminalTheme } from '../lib/theme';
+import { getTerminalTheme, getTerminalThemeForCustom } from '../lib/theme';
 import { matchesGlobalShortcut } from '../lib/shortcuts';
 import { isMac } from '../lib/platform';
 import { resolvedBindings } from '../store/keybindings';
 import { matchesKeyEvent } from '../lib/keybindings';
-import { store, setTaskLastInputAt } from '../store/store';
+import { store, setTaskLastInputAt, retryTaskMcpStartup } from '../store/store';
 import { warn as logWarn } from '../lib/log';
 import { registerTerminal, unregisterTerminal, markDirty } from '../lib/terminalFitManager';
 import { dataTransferToShellArgs, escapePath } from '../lib/terminalDrop';
 import { cleanCopiedTerminalText } from '../lib/copy-text';
+import { computeDisableStdin } from '../lib/terminalDisableStdin';
 import type { PtyOutput } from '../ipc/types';
 
 let windowUnloading = false;
@@ -72,6 +73,7 @@ interface TerminalViewProps {
   spawnDelayMs?: number;
   attachExisting?: boolean;
   preserveOnWindowUnload?: boolean;
+  dockerMountWorktreeParent?: boolean;
   onExit?: (exitInfo: {
     exit_code: number | null;
     signal: string | null;
@@ -95,6 +97,10 @@ interface TerminalViewProps {
   isFocused?: boolean;
 }
 
+// Status parsing only needs recent output. Capping forwarded bytes avoids
+// expensive full-chunk decoding during large terminal bursts.
+const STATUS_ANALYSIS_MAX_BYTES = 8 * 1024;
+
 /** Terminal-layer bindings — filtered from resolved bindings.
  *  Called in the key handler (hot path); resolveBindings walks the full
  *  defaults list on each call, which is fine at human typing speed. */
@@ -108,28 +114,27 @@ export function TerminalView(props: TerminalViewProps) {
   let fitAddon: FitAddon | undefined;
   let webglAddon: WebglAddon | undefined;
 
+  function activeTerminalTheme() {
+    const id = store.activeCustomThemeId;
+    const custom = id ? store.customThemes[id] : undefined;
+    return custom
+      ? getTerminalThemeForCustom(custom.terminalBackground)
+      : getTerminalTheme(store.themePreset);
+  }
+
   onMount(() => {
     // Capture props eagerly so cleanup/callbacks always use the original values
     const taskId = props.taskId;
     const agentId = props.agentId;
     const initialFontSize = props.fontSize ?? 13;
-    const command = props.command;
-    const args = props.args;
-    const cwd = props.cwd;
-    const env = props.env ?? {};
-    const isShell = props.isShell;
-    const stepsEnabled = props.stepsEnabled;
-    const dockerMode = props.dockerMode;
-    const dockerImage = props.dockerImage;
     const attachExisting = props.attachExisting;
     const preserveOnWindowUnload = props.preserveOnWindowUnload === true;
-    const onExit = props.onExit;
 
     term = new Terminal({
       cursorBlink: true,
       fontSize: initialFontSize,
       fontFamily: getTerminalFontFamily(store.terminalFont),
-      theme: getTerminalTheme(store.themePreset),
+      theme: activeTerminalTheme(),
       allowProposedApi: true,
       scrollback: TERMINAL_SCROLLBACK_LINES,
     });
@@ -152,6 +157,15 @@ export function TerminalView(props: TerminalViewProps) {
     );
 
     term.open(containerRef);
+
+    // Block direct PTY keyboard input when the task is coordinator-controlled.
+    // disableStdin prevents xterm from forwarding keystrokes to the process;
+    // copy/paste/scrollback still work. The effect re-runs when controlledBy
+    // changes so Take Control / Release Control works without a remount.
+    createEffect(() => {
+      const controlledBy = store.tasks[props.taskId]?.controlledBy;
+      if (term) term.options.disableStdin = computeDisableStdin(controlledBy);
+    });
 
     // File path link provider — makes file paths clickable in terminal output
     // Must be registered after term.open() so the DOM is available.
@@ -194,7 +208,7 @@ export function TerminalView(props: TerminalViewProps) {
               // Strip line:col suffix for opening
               const filePath = link.text.replace(/:\d+(:\d+)?$/, '');
               // Resolve relative paths against the task's working directory
-              const resolved = filePath.startsWith('/') ? filePath : `${cwd}/${filePath}`;
+              const resolved = filePath.startsWith('/') ? filePath : `${props.cwd}/${filePath}`;
               // .md files open in viewer; Shift held = open externally instead
               if (/\.md$/i.test(resolved) && props.onFileLink && !event.shiftKey) {
                 props.onFileLink(resolved);
@@ -412,7 +426,7 @@ export function TerminalView(props: TerminalViewProps) {
     }) {
       if (!term) return;
       term.write('\r\n\x1b[90m[Process exited]\x1b[0m\r\n');
-      onExit?.(payload);
+      props.onExit?.(payload);
     }
 
     function flushOutputQueue() {
@@ -435,7 +449,13 @@ export function TerminalView(props: TerminalViewProps) {
         }
       }
 
+      const statusPayload =
+        payload.length > STATUS_ANALYSIS_MAX_BYTES
+          ? payload.subarray(payload.length - STATUS_ANALYSIS_MAX_BYTES)
+          : payload;
+
       outputWriteInFlight = true;
+      // eslint-disable-next-line solid/reactivity -- write callback is not a reactive context
       term.write(payload, () => {
         outputWriteInFlight = false;
         watermark = Math.max(watermark - payload.length, 0);
@@ -449,6 +469,7 @@ export function TerminalView(props: TerminalViewProps) {
           });
         }
 
+        props.onData?.(statusPayload);
         if (outputQueue.length > 0) {
           scheduleOutputFlush();
           return;
@@ -470,9 +491,6 @@ export function TerminalView(props: TerminalViewProps) {
     }
 
     function enqueueOutput(chunk: Uint8Array) {
-      // Status analysis runs before xterm rendering/backpressure and receives
-      // full chunks so UTF-8 decoder state stays valid across PTY boundaries.
-      props.onData?.(chunk);
       outputQueue.push(chunk);
       outputQueuedBytes += chunk.length;
       watermark += chunk.length;
@@ -518,17 +536,9 @@ export function TerminalView(props: TerminalViewProps) {
     let inputBuffer = '';
     let pendingInput = '';
     let inputFlushTimer: number | undefined;
-    let ptyReady = false;
 
     function flushPendingInput() {
       if (!pendingInput) return;
-      if (!ptyReady) {
-        if (inputFlushTimer !== undefined) {
-          clearTimeout(inputFlushTimer);
-          inputFlushTimer = undefined;
-        }
-        return;
-      }
       const data = pendingInput;
       pendingInput = '';
       if (inputFlushTimer !== undefined) {
@@ -536,8 +546,8 @@ export function TerminalView(props: TerminalViewProps) {
         inputFlushTimer = undefined;
       }
       fireAndForget(IPC.WriteToAgent, { agentId, data });
-      if (!isShell && (data.includes('\r') || data.includes('\n'))) {
-        setTaskLastInputAt(taskId);
+      if (!props.isShell && (data.includes('\r') || data.includes('\n'))) {
+        setTaskLastInputAt(props.taskId);
       }
     }
 
@@ -548,6 +558,7 @@ export function TerminalView(props: TerminalViewProps) {
         return;
       }
       if (inputFlushTimer !== undefined) return;
+      // eslint-disable-next-line solid/reactivity
       inputFlushTimer = window.setTimeout(() => {
         inputFlushTimer = undefined;
         flushPendingInput();
@@ -584,7 +595,6 @@ export function TerminalView(props: TerminalViewProps) {
 
     function flushPendingResize() {
       if (!pendingResize) return;
-      if (!ptyReady) return;
       const { cols, rows } = pendingResize;
       pendingResize = null;
       if (cols === lastSentCols && rows === lastSentRows) return;
@@ -631,31 +641,32 @@ export function TerminalView(props: TerminalViewProps) {
       invoke(IPC.SpawnAgent, {
         taskId,
         agentId,
-        command,
-        args,
-        cwd,
-        env,
+        command: props.command,
+        args: props.args,
+        cwd: props.cwd,
+        env: props.env ?? {},
         cols: term.cols,
         rows: term.rows,
-        isShell,
-        stepsEnabled,
-        dockerMode,
-        dockerImage,
+        isShell: props.isShell,
+        stepsEnabled: props.stepsEnabled,
+        dockerMode: props.dockerMode,
+        dockerImage: props.dockerImage,
+        dockerMountWorktreeParent: props.dockerMountWorktreeParent,
         shareDockerAgentAuth: store.shareDockerAgentAuth,
         attachExisting,
         onOutput,
       })
+        // eslint-disable-next-line solid/reactivity -- promise callbacks are not reactive contexts
         .then(() => {
-          ptyReady = true;
           flushPendingResize();
           flushPendingInput();
         })
+        // eslint-disable-next-line solid/reactivity -- promise catch handler reads current prop values intentionally
         .catch((err) => {
-          // Strip control/escape characters to prevent terminal escape injection
           // eslint-disable-next-line no-control-regex -- intentionally stripping control/escape chars to prevent terminal injection
           const safeErr = String(err).replace(/[\x00-\x1f\x7f]/g, '');
           term?.write(`\x1b[31mFailed to spawn: ${safeErr}\x1b[0m\r\n`);
-          onExit?.({
+          props.onExit?.({
             exit_code: null,
             signal: 'spawn_failed',
             last_output: [`Failed to spawn: ${safeErr}`],
@@ -663,9 +674,29 @@ export function TerminalView(props: TerminalViewProps) {
         });
     }
 
-    const spawnDelayMs = props.spawnDelayMs ?? 0;
-    if (spawnDelayMs > 0) {
-      spawnTimer = window.setTimeout(startSpawn, spawnDelayMs);
+    // For coordinator and coordinated sub-tasks, defer spawn until MCP is ready.
+    // Coordinator tasks wait for StartMCPServer to complete; sub-tasks wait for hydrateTask.
+    // Always install the watcher when MCP lifecycle is present so that Retry (error → ready)
+    // works even when the component mounts in 'error' state.
+    const spawnDelayMsVal = props.spawnDelayMs ?? 0;
+    const task = store.tasks[taskId];
+    if (task?.mcpStartupStatus !== undefined) {
+      let spawned = false;
+      createEffect(() => {
+        if (spawned) return;
+        const status = store.tasks[taskId]?.mcpStartupStatus;
+        if (status === 'ready') {
+          spawned = true;
+          if (spawnDelayMsVal > 0) {
+            spawnTimer = window.setTimeout(startSpawn, spawnDelayMsVal);
+          } else {
+            startSpawn();
+          }
+        }
+        // 'error' is handled by the overlay rendered outside onMount
+      });
+    } else if (spawnDelayMsVal > 0) {
+      spawnTimer = window.setTimeout(startSpawn, spawnDelayMsVal);
     } else {
       startSpawn();
     }
@@ -689,7 +720,6 @@ export function TerminalView(props: TerminalViewProps) {
         ptyPaused = false;
       }
       if (!preserveSession && spawnStarted) {
-        // kill_agent already clears paused flag before killing
         fireAndForget(IPC.KillAgent, { agentId });
       }
       term?.dispose();
@@ -711,22 +741,67 @@ export function TerminalView(props: TerminalViewProps) {
   });
 
   createEffect(() => {
-    const preset = store.themePreset;
     if (!term) return;
-    term.options.theme = getTerminalTheme(preset);
+    term.options.theme = activeTerminalTheme();
     markDirty(props.agentId);
   });
 
+  const mcpError = () => store.tasks[props.taskId]?.mcpStartupError;
+  const mcpStatus = () => store.tasks[props.taskId]?.mcpStartupStatus;
+
   return (
-    <div
-      ref={containerRef}
-      style={{
-        width: '100%',
-        height: '100%',
-        overflow: 'hidden',
-        padding: '4px 0 0 4px',
-        contain: 'strict',
-      }}
-    />
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div
+        ref={containerRef}
+        style={{
+          width: '100%',
+          height: '100%',
+          overflow: 'hidden',
+          padding: '4px 0 0 4px',
+          contain: 'strict',
+        }}
+      />
+      <Show when={mcpStatus() === 'error'}>
+        <div
+          style={{
+            position: 'absolute',
+            inset: '0',
+            display: 'flex',
+            'flex-direction': 'column',
+            'align-items': 'center',
+            'justify-content': 'center',
+            gap: '12px',
+            background: 'rgba(0,0,0,0.85)',
+            'font-family': 'var(--font-ui)',
+            'z-index': '10',
+          }}
+        >
+          <span
+            style={{
+              color: '#ff6b6b',
+              'font-size': '13px',
+              'text-align': 'center',
+              padding: '0 16px',
+            }}
+          >
+            MCP startup failed: {mcpError() ?? 'unknown error'}
+          </span>
+          <button
+            style={{
+              padding: '6px 16px',
+              background: '#3b82f6',
+              color: '#fff',
+              border: 'none',
+              'border-radius': '4px',
+              'font-size': '13px',
+              cursor: 'pointer',
+            }}
+            onClick={() => retryTaskMcpStartup(props.taskId)}
+          >
+            Retry
+          </button>
+        </div>
+      </Show>
+    </div>
   );
 }

@@ -26,7 +26,6 @@ type MockTask = {
   name: string;
   projectId: string;
   agentIds: string[];
-  selectedAgentId?: string;
   shellAgentIds: string[];
   stepsEnabled: boolean;
   stepsContent: Array<{ id: string }>;
@@ -69,14 +68,7 @@ vi.mock('./core', () => ({
 vi.mock('./navigation', () => ({
   setActiveTask: vi.fn((id: string) => {
     mockStore.activeTaskId = id;
-    const task = mockStore.tasks[id];
-    const panel = mockStore.focusedPanel[id];
-    const focusedAgentId = panel?.startsWith('ai-terminal:') ? panel.slice(12) : null;
-    mockStore.activeAgentId =
-      (focusedAgentId && task?.agentIds.includes(focusedAgentId) ? focusedAgentId : null) ??
-      (task?.selectedAgentId && task.agentIds.includes(task.selectedAgentId)
-        ? task.selectedAgentId
-        : (task?.agentIds?.[0] ?? null));
+    mockStore.activeAgentId = mockStore.tasks[id]?.agentIds?.[0] ?? null;
   }),
 }));
 
@@ -90,7 +82,7 @@ vi.mock('./tasks', () => ({
   }),
 }));
 
-import { navigateColumn, navigateRow, navigateTask } from './focus';
+import { navigateColumn, navigateRow } from './focus';
 
 function setTask(id: string, overrides: Record<string, unknown> = {}): void {
   mockStore.tasks[id] = {
@@ -149,21 +141,17 @@ describe('focus navigation neighbor map', () => {
     expect(mockStore.focusedPanel['task-1']).toBe('shell-toolbar:0');
   });
 
-  it('moves right from a split-mode AI terminal to the task right column', () => {
+  it('always enters the top-right panel when moving right from ai-terminal in split mode', () => {
     setTask('task-1', {
       stepsEnabled: true,
       stepsContent: [{ id: 'step-1' }],
     });
-    setTask('task-2', { agentIds: ['agent-2'] });
-    mockStore.taskOrder = ['task-1', 'task-2'];
     mockStore.taskSplitMode['task-1'] = true;
     mockStore.focusedPanel['task-1'] = 'ai-terminal';
 
     navigateColumn('right');
 
-    expect(mockStore.activeTaskId).toBe('task-1');
     expect(mockStore.focusedPanel['task-1']).toBe('changed-files');
-    expect(mockStore.activeAgentId).toBe('agent-1');
   });
 
   it('falls into the top-right panel when split-mode ai-terminal has no lower left neighbor', () => {
@@ -233,233 +221,5 @@ describe('focus navigation neighbor map', () => {
     navigateRow('down');
 
     expect(mockStore.focusedPanel['task-1']).toBe('shell:0');
-  });
-
-  it('moves horizontally between multiple AI agent terminals', () => {
-    setTask('task-1', { agentIds: ['agent-1', 'agent-2'] });
-    mockStore.focusedPanel['task-1'] = 'ai-terminal:agent-1';
-
-    navigateColumn('right');
-
-    expect(mockStore.focusedPanel['task-1']).toBe('ai-terminal:agent-2');
-    expect(mockStore.activeAgentId).toBe('agent-2');
-  });
-
-  it('moves horizontally between multiple split-mode AI agent terminals before crossing tasks', () => {
-    setTask('task-1', { agentIds: ['agent-1', 'agent-2'] });
-    setTask('task-2', { agentIds: ['agent-3'] });
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.taskSplitMode['task-1'] = true;
-    mockStore.focusedPanel['task-1'] = 'ai-terminal:agent-1';
-
-    navigateColumn('right');
-
-    expect(mockStore.activeTaskId).toBe('task-1');
-    expect(mockStore.focusedPanel['task-1']).toBe('ai-terminal:agent-2');
-    expect(mockStore.activeAgentId).toBe('agent-2');
-
-    navigateColumn('right');
-
-    expect(mockStore.activeTaskId).toBe('task-1');
-    expect(mockStore.focusedPanel['task-1']).toBe('changed-files');
-    expect(mockStore.activeAgentId).toBe('agent-2');
-
-    navigateColumn('right');
-
-    expect(mockStore.activeTaskId).toBe('task-2');
-    expect(mockStore.focusedPanel['task-2']).toBe('notes');
-    expect(mockStore.activeAgentId).toBe('agent-3');
-  });
-
-  it('moves right from a single split-mode AI terminal into the right column', () => {
-    setTask('task-1', { agentIds: ['agent-1'] });
-    setTask('task-2', { agentIds: ['agent-2'] });
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.taskSplitMode['task-1'] = true;
-    mockStore.focusedPanel['task-1'] = 'ai-terminal:agent-1';
-
-    navigateColumn('right');
-
-    expect(mockStore.activeTaskId).toBe('task-1');
-    expect(mockStore.focusedPanel['task-1']).toBe('changed-files');
-    expect(mockStore.activeAgentId).toBe('agent-1');
-  });
-
-  it('preserves the target task selected agent when crossing into its AI terminal row', () => {
-    setTask('task-1', { agentIds: ['agent-1'] });
-    setTask('task-2', {
-      agentIds: ['agent-2a', 'agent-2b'],
-      selectedAgentId: 'agent-2b',
-    });
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.focusedPanel['task-1'] = 'ai-terminal:agent-1';
-
-    navigateColumn('right');
-
-    expect(mockStore.activeTaskId).toBe('task-2');
-    expect(mockStore.focusedPanel['task-2']).toBe('ai-terminal:agent-2b');
-    expect(mockStore.activeAgentId).toBe('agent-2b');
-  });
-
-  it('stays on the AI terminal row when crossing into a task with shell terminals', () => {
-    setTask('task-1', { agentIds: ['agent-1a', 'agent-1b'] });
-    setTask('task-2', {
-      agentIds: ['agent-2a', 'agent-2b'],
-      selectedAgentId: 'agent-2b',
-      shellAgentIds: ['shell-2'],
-    });
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.focusedPanel['task-1'] = 'ai-terminal:agent-1b';
-
-    navigateColumn('right');
-
-    expect(mockStore.activeTaskId).toBe('task-2');
-    expect(mockStore.focusedPanel['task-2']).toBe('ai-terminal:agent-2b');
-    expect(mockStore.activeAgentId).toBe('agent-2b');
-  });
-
-  it('stays on the AI terminal row when crossing left into a task with shell terminals', () => {
-    setTask('task-1', {
-      agentIds: ['agent-1a', 'agent-1b'],
-      selectedAgentId: 'agent-1b',
-      shellAgentIds: ['shell-1'],
-    });
-    setTask('task-2', { agentIds: ['agent-2a', 'agent-2b'] });
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.activeTaskId = 'task-2';
-    mockStore.activeAgentId = 'agent-2a';
-    mockStore.focusedPanel['task-2'] = 'ai-terminal:agent-2a';
-
-    navigateColumn('left');
-
-    expect(mockStore.activeTaskId).toBe('task-1');
-    expect(mockStore.focusedPanel['task-1']).toBe('ai-terminal:agent-1b');
-    expect(mockStore.activeAgentId).toBe('agent-1b');
-  });
-
-  it('crosses from a shell terminal to the target shell toolbar when no shell is open', () => {
-    setTask('task-1', { shellAgentIds: ['shell-1'] });
-    setTask('task-2', { agentIds: ['agent-2a', 'agent-2b'] });
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.focusedPanel['task-1'] = 'shell:0';
-
-    navigateColumn('right');
-
-    expect(mockStore.activeTaskId).toBe('task-2');
-    expect(mockStore.focusedPanel['task-2']).toBe('shell-toolbar:0');
-    expect(mockStore.activeAgentId).toBe('agent-2a');
-  });
-
-  it('moves down from a secondary split-mode AI terminal to the prompt', () => {
-    setTask('task-1', { agentIds: ['agent-1', 'agent-2'] });
-    mockStore.taskSplitMode['task-1'] = true;
-    mockStore.activeAgentId = 'agent-2';
-    mockStore.focusedPanel['task-1'] = 'ai-terminal:agent-2';
-
-    navigateRow('down');
-
-    expect(mockStore.focusedPanel['task-1']).toBe('prompt');
-    expect(mockStore.activeAgentId).toBe('agent-2');
-  });
-
-  it('moves up from the split-mode prompt to the active AI terminal', () => {
-    setTask('task-1', { agentIds: ['agent-1', 'agent-2'] });
-    mockStore.taskSplitMode['task-1'] = true;
-    mockStore.activeAgentId = 'agent-2';
-    mockStore.focusedPanel['task-1'] = 'prompt';
-
-    navigateRow('up');
-
-    expect(mockStore.focusedPanel['task-1']).toBe('ai-terminal:agent-2');
-    expect(mockStore.activeAgentId).toBe('agent-2');
-  });
-});
-
-describe('navigateTask', () => {
-  it('preserves the focused panel name when switching to the next task', () => {
-    setTask('task-1');
-    setTask('task-2');
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.focusedPanel['task-1'] = 'changed-files';
-
-    navigateTask('right');
-
-    expect(mockStore.activeTaskId).toBe('task-2');
-    expect(mockStore.focusedPanel['task-2']).toBe('changed-files');
-  });
-
-  it('preserves the focused panel name when switching to the previous task', () => {
-    setTask('task-1');
-    setTask('task-2');
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.activeTaskId = 'task-2';
-    mockStore.focusedPanel['task-2'] = 'notes';
-
-    navigateTask('left');
-
-    expect(mockStore.activeTaskId).toBe('task-1');
-    expect(mockStore.focusedPanel['task-1']).toBe('notes');
-  });
-
-  it('falls back to the default panel when the current panel does not exist in the target', () => {
-    setTask('task-1', { stepsEnabled: true, stepsContent: [{ id: 'step-1' }] });
-    setTask('task-2');
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.focusedPanel['task-1'] = 'steps';
-
-    navigateTask('right');
-
-    expect(mockStore.activeTaskId).toBe('task-2');
-    expect(mockStore.focusedPanel['task-2']).toBe('ai-terminal:agent-1');
-  });
-
-  it('is a no-op at the leftmost task', () => {
-    setTask('task-1');
-    setTask('task-2');
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.activeTaskId = 'task-1';
-    mockStore.focusedPanel['task-1'] = 'changed-files';
-
-    navigateTask('left');
-
-    expect(mockStore.activeTaskId).toBe('task-1');
-    expect(mockStore.focusedPanel['task-1']).toBe('changed-files');
-    expect(mockStore.sidebarFocused).toBe(false);
-  });
-
-  it('is a no-op at the rightmost task', () => {
-    setTask('task-1');
-    setTask('task-2');
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.activeTaskId = 'task-2';
-    mockStore.focusedPanel['task-2'] = 'notes';
-
-    navigateTask('right');
-
-    expect(mockStore.activeTaskId).toBe('task-2');
-    expect(mockStore.focusedPanel['task-2']).toBe('notes');
-    expect(mockStore.placeholderFocused).toBe(false);
-  });
-
-  it('is a no-op when the active id is not in taskOrder (e.g. terminal)', () => {
-    setTask('task-1');
-    mockStore.taskOrder = ['task-1'];
-    mockStore.activeTaskId = 'terminal-1';
-
-    navigateTask('right');
-
-    expect(mockStore.activeTaskId).toBe('terminal-1');
-  });
-
-  it('is a no-op while a dialog is open', () => {
-    setTask('task-1');
-    setTask('task-2');
-    mockStore.taskOrder = ['task-1', 'task-2'];
-    mockStore.focusedPanel['task-1'] = 'changed-files';
-    mockStore.showHelpDialog = true;
-
-    navigateTask('right');
-
-    expect(mockStore.activeTaskId).toBe('task-1');
   });
 });

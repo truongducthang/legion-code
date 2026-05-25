@@ -17,6 +17,8 @@ export interface AgentDef {
   /** Per-agent override for the stability-check delay (ms) used before auto-sending
    *  the initial prompt.  Agents with multi-step init dialogs need a longer wait. */
   prompt_ready_delay_ms?: number;
+  /** CLI flag used to pass an MCP config path to this agent. Omit when unsupported. */
+  mcp_config_flag?: string;
 }
 
 export interface CreateTaskResult {
@@ -191,6 +193,9 @@ export interface MobileTaskSpawnedPayload {
    *  re-send it. */
   prompt: string;
 }
+// The main-process updater owns these types; re-exported so the renderer
+// shares one source of truth and cannot drift from it.
+export type { UpdatePhase, UpdateStatus } from '../../electron/ipc/updater';
 
 export interface StepEntry {
   summary: string;

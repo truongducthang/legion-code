@@ -39,7 +39,7 @@
 | **Diff review with inline comments**                  | **AI Arena — race agents head-to-head**       |
 | ![Diff review](screens/diff-dialog-code-comments.png) | ![AI Arena](screens/ai-arena-mode.png)        |
 
-## Why Parallel Code?
+## Why Legion?
 
 - **Use the AI coding tools you already trust** — [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), and [Copilot CLI](https://docs.github.com/en/copilot/concepts/agents/about-copilot-cli) — all from one interface.
 - **Free and open source** — no extra subscription required. MIT licensed.
@@ -63,7 +63,7 @@
 
 ## How it works
 
-When you create a task, Parallel Code:
+When you create a task, Legion:
 
 1. Creates a new git branch from your main branch
 2. Sets up a [git worktree](https://git-scm.com/docs/git-worktree) so the agent works in a separate directory
@@ -83,8 +83,8 @@ When you're happy with the result, merge the branch back to main from the sideba
 - **PR CI status watcher** — desktop notification when GitHub checks settle
 - Shell terminals per task, scoped to the worktree
 - **Direct mode** for working on the main branch without isolation, plus support for **folders without a git repo**
-- **Existing worktree import** — bring already-created worktrees into Parallel Code
-- **Sandboxing with project-specific Dockerfiles** — drop a `.legion/Dockerfile` into the project and tasks run inside it
+- **Existing worktree import** — bring already-created worktrees into Legion
+- **Sandboxing with project-specific Dockerfiles** — drop a `.legion-code/Dockerfile` into the project and tasks run inside it
 - **Coverage radar** — per-file test-coverage badges in the Changed Files panel
 - **Configurable keyboard shortcuts** with per-agent presets
 - 10 themes — Islands Dark, Minimal, Graphite, Midnight, Classic, Indigo, Ember, Glacier, Zenburnesque, Workbench
@@ -107,7 +107,7 @@ When you're happy with the result, merge the branch back to main from the sideba
 
 ## Getting Started
 
-1. **Download** the latest release for your platform from the [releases page](https://github.com/truongducthang/legion/releases/latest):
+1. **Download** the latest release for your platform from the [releases page](https://github.com/truongducthang/legion-code/releases/latest):
    - **macOS** — `.dmg` (universal)
    - **Linux** — `.AppImage` or `.deb`
    - **Windows** — `.exe` installer (NSIS) or portable `.exe`
@@ -149,7 +149,7 @@ opens normally.
 ```sh
 # Replace VERSION with the latest tag from the releases page
 curl -L -o Legion.dmg \
-  https://github.com/truongducthang/legion/releases/download/VERSION/Legion-VERSION-arm64.dmg
+  https://github.com/truongducthang/legion-code/releases/download/VERSION/Legion-VERSION-arm64.dmg
 
 hdiutil attach Legion.dmg
 cp -R "/Volumes/Legion/Legion.app" /Applications/
@@ -180,8 +180,8 @@ quarantine flag.
 <summary><strong>Build from source</strong></summary>
 
 ```sh
-git clone https://github.com/truongducthang/legion.git
-cd legion
+git clone https://github.com/truongducthang/legion-code.git
+cd legion-code
 npm install
 npm run dev
 ```
@@ -224,11 +224,11 @@ Requires [Node.js](https://nodejs.org/) v18+.
 
 ---
 
-If Legion saves you time, consider giving it a [star on GitHub](https://github.com/truongducthang/legion). It helps others find the project.
+If Legion saves you time, consider giving it a [star on GitHub](https://github.com/truongducthang/legion-code). It helps others find the project.
 
 ## Remote control via Telegram
 
-In addition to the QR-code mobile path, Parallel Code can be driven from a
+In addition to the QR-code mobile path, Legion can be driven from a
 Telegram bot. Telegram's relay servers reach the desktop from any network
 (mobile data, café Wi-Fi, locked-down corporate LANs) and deliver native
 push notifications when an agent stops to ask a question.
@@ -237,7 +237,7 @@ push notifications when an agent stops to ask a question.
 
 1. **Create a bot.** Message [@BotFather](https://t.me/BotFather) on Telegram,
    send `/newbot`, follow the prompts, and copy the token it returns.
-2. **Paste the token.** Open Parallel Code → **Settings → Telegram**, paste
+2. **Paste the token.** Open Legion → **Settings → Telegram**, paste
    the token, click **Save**. The token is encrypted via the system
    keychain (`safeStorage`) — macOS Keychain on macOS, libsecret on Linux —
    and never leaves the desktop. On a Linux box without libsecret installed
@@ -282,7 +282,7 @@ notifications) and the bot infers the agent without needing `<id>`.
 When the bot has a **public base URL** configured, the **Open** button on
 notifications launches the mobile SPA inside Telegram's WebApp container
 with no QR-code step. Authentication is automatic via Telegram's signed
-`initData` payload — Parallel Code verifies the HMAC against your bot
+`initData` payload — Legion verifies the HMAC against your bot
 token and mints a session token without prompting.
 
 Pick one of these to obtain a public URL:
@@ -318,7 +318,7 @@ when at least one allowed chat exists.
 ### File uploads
 
 Send any document or photo (≤ 20 MB) from an allowed chat and the bot
-downloads it under `~/.../tmp/legion-telegram-uploads/`. The
+downloads it under `~/.../tmp/legion-code-telegram-uploads/`. The
 reply includes the absolute path and a _Paste path into agent_ button
 that writes the shell-escaped path into the focused agent's PTY — useful
 for sharing a screenshot or log file with a running session.

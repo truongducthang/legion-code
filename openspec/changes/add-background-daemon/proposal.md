@@ -44,7 +44,7 @@ runtime mode that runs Electron without a window.
   for completion, pushes, opens a draft PR, and notifies the
   configured Telegram chat.
 - A new safety model layered on top of the existing per-project
-  Telegram opt-in: double opt-in (a repo-side `.legion/daemon.yml`
+  Telegram opt-in: double opt-in (a repo-side `.legion-code/daemon.yml`
   AND a `state.json` `daemon.repos` entry must both agree), an
   issue-author allow-list, comment redaction before prompt synthesis,
   multi-axis budgets (runs/day, concurrency, wallclock, output bytes,

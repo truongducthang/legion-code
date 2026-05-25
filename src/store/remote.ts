@@ -6,8 +6,8 @@ interface ServerResult {
   url: string;
   wifiUrl: string | null;
   tailscaleUrl: string | null;
-  token: string;
   port: number;
+  unavailableReason?: string;
 }
 
 interface PublicTunnelStatus {
@@ -22,9 +22,15 @@ let stopGeneration = 0;
 
 export async function startRemoteAccess(port?: number): Promise<ServerResult> {
   const result = await invoke<ServerResult>(IPC.StartRemoteServer, port ? { port } : {});
+  if (result.unavailableReason) {
+    throw new Error(
+      result.unavailableReason === 'coordinator_active'
+        ? 'Remote access is unavailable while a coordinator is active. Stop the coordinator first.'
+        : `Remote access unavailable: ${result.unavailableReason}`,
+    );
+  }
   setStore('remoteAccess', {
     enabled: true,
-    token: result.token,
     port: result.port,
     url: result.url,
     wifiUrl: result.wifiUrl,
@@ -34,24 +40,27 @@ export async function startRemoteAccess(port?: number): Promise<ServerResult> {
   return result;
 }
 
-export async function stopRemoteAccess(): Promise<void> {
+export async function stopRemoteAccess(): Promise<{ stopped: boolean; reason?: string }> {
   stopGeneration++;
-  await invoke(IPC.StopRemoteServer);
-  setStore('remoteAccess', {
-    enabled: false,
-    token: null,
-    port: 7777,
-    url: null,
-    wifiUrl: null,
-    tailscaleUrl: null,
-    connectedClients: 0,
-    // The main process auto-releases the public-tunnel hold when the
-    // server stops; mirror that into the store so the modal returns to
-    // an idle state without waiting for the status push.
-    publicUrl: null,
-    publicTunnelState: 'idle',
-    publicTunnelError: null,
-  });
+  const result = await invoke<{ stopped: boolean; reason?: string }>(IPC.StopRemoteServer);
+  if (result.stopped) {
+    setStore('remoteAccess', {
+      enabled: false,
+      token: null,
+      port: 7777,
+      url: null,
+      wifiUrl: null,
+      tailscaleUrl: null,
+      connectedClients: 0,
+      // The main process auto-releases the public-tunnel hold when the
+      // server stops; mirror that into the store so the modal returns to
+      // an idle state without waiting for the status push.
+      publicUrl: null,
+      publicTunnelState: 'idle',
+      publicTunnelError: null,
+    });
+  }
+  return result;
 }
 
 /**
@@ -133,7 +142,6 @@ export async function refreshRemoteStatus(): Promise<void> {
     url?: string;
     wifiUrl?: string;
     tailscaleUrl?: string;
-    token?: string;
     port?: number;
   }>(IPC.GetRemoteStatus);
 
@@ -147,7 +155,6 @@ export async function refreshRemoteStatus(): Promise<void> {
       url: result.url ?? null,
       wifiUrl: result.wifiUrl ?? null,
       tailscaleUrl: result.tailscaleUrl ?? null,
-      token: result.token ?? null,
       port: result.port ?? 7777,
     });
   } else {

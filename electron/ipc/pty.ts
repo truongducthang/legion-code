@@ -187,6 +187,39 @@ export function validateCommand(command: string): void {
   }
 }
 
+/** Returns `-v mainGitDir:mainGitDir` mount args so git works inside the container.
+ *  Walks up from startPath to find the .git file (worktrees may be nested directories). */
+function resolveWorktreeGitDirMount(startPath: string): string[] {
+  try {
+    let dir = startPath;
+    while (true) {
+      const gitFile = path.join(dir, '.git');
+      if (fs.existsSync(gitFile)) {
+        if (!fs.statSync(gitFile).isFile()) return []; // real .git dir, no extra mount needed
+        const content = fs.readFileSync(gitFile, 'utf8').trim();
+        const match = content.match(/^gitdir:\s*(.+)$/m);
+        if (!match) return [];
+        // Walk up from the gitdir pointer until we find the dir containing objects/
+        // (the main .git dir). Avoids hard-coding a fixed number of levels.
+        let candidate = path.resolve(match[1].trim());
+        while (true) {
+          if (fs.existsSync(path.join(candidate, 'objects'))) {
+            return ['-v', `${candidate}:${candidate}`];
+          }
+          const parent = path.dirname(candidate);
+          if (parent === candidate) return [];
+          candidate = parent;
+        }
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) return []; // filesystem root
+      dir = parent;
+    }
+  } catch {
+    return [];
+  }
+}
+
 export function spawnAgent(
   win: BrowserWindow,
   args: {
@@ -203,6 +236,9 @@ export function spawnAgent(
     dockerImage?: string;
     shareDockerAgentAuth?: boolean;
     attachExisting?: boolean;
+    /** When true (coordinator tasks), also mount the parent of cwd so sub-task
+     *  worktrees created later are immediately visible inside the container. */
+    dockerMountWorktreeParent?: boolean;
     onOutput: { __CHANNEL_ID__: string };
   },
 ): void {
@@ -269,6 +305,8 @@ export function spawnAgent(
     'DYLD_INSERT_LIBRARIES',
     'NODE_OPTIONS',
     'ELECTRON_RUN_AS_NODE',
+    // Prevent renderer from injecting or overriding MCP auth tokens.
+    'PARALLEL_CODE_MCP_TOKEN',
   ]);
   const safeEnvOverrides: Record<string, string> = {};
   for (const [k, v] of Object.entries(args.env ?? {})) {
@@ -299,7 +337,7 @@ export function spawnAgent(
 
   // Derive a predictable, unique container name from the agentId so we can
   // reliably stop it later without having to parse docker inspect output.
-  const containerName = args.dockerMode ? `legion-${args.agentId.slice(0, 12)}` : null;
+  const containerName = args.dockerMode ? `legion-code-${args.agentId.slice(0, 12)}` : null;
 
   if (args.dockerMode) {
     const name = containerName as string;
@@ -314,7 +352,7 @@ export function spawnAgent(
       name,
       // Label so we can identify all containers owned by this app
       '--label',
-      'legion=true',
+      'legion-code=true',
       // Host networking — agents need internet access for API calls and package installs.
       // Filesystem isolation (volume mounts) is the primary safety goal, not network isolation.
       '--network',
@@ -327,19 +365,37 @@ export function spawnAgent(
       // Run as host user so container files are owned by the host user
       '--user',
       `${process.getuid?.() ?? 1000}:${process.getgid?.() ?? 1000}`,
-      // Mount the project directory as the only writable volume
+      // Mount the coordinator worktree. For coordinator tasks, also mount the
+      // parent directory so sub-task worktrees created later are immediately
+      // visible via bind mount (VirtioFS propagation is too slow for new dirs).
+      // Also mount the main .git directory so git commands work inside the
+      // container (worktree .git files point to the main git dir by path).
+      ...(args.dockerMountWorktreeParent
+        ? ['-v', `${path.dirname(cwd)}:${path.dirname(cwd)}`, ...resolveWorktreeGitDirMount(cwd)]
+        : []),
       '-v',
       `${cwd}:${cwd}`,
       '-w',
       cwd,
       // Forward env vars the agent needs (API keys, git config, etc.)
       ...buildDockerEnvFlags(spawnEnv),
-      // Writable HOME for agent config files (host HOME is blocked above)
+      // Per-agent writable HOME so concurrent sub-tasks don't collide on config files.
       '-e',
-      `HOME=${DOCKER_CONTAINER_HOME}`,
+      `HOME=${DOCKER_CONTAINER_HOME}/agent-${args.agentId}`,
       // Mount SSH and git config read-only for git operations
-      ...buildDockerCredentialMounts(args.command, args.shareDockerAgentAuth === true),
+      ...buildDockerCredentialMounts(
+        args.command,
+        args.shareDockerAgentAuth === true,
+        cwd,
+        `${DOCKER_CONTAINER_HOME}/agent-${args.agentId}`,
+      ),
       image,
+      // Pre-create the per-agent HOME directory then exec the real command.
+      // $HOME is already set by the -e flag above; using it here avoids repeating the path.
+      'sh',
+      '-c',
+      'mkdir -p "$HOME" && exec "$@"',
+      '--',
       command,
       ...args.args,
     ];
@@ -727,6 +783,12 @@ const DOCKER_ENV_BLOCK_LIST = new Set([
   'SSH_AUTH_SOCK',
   'GPG_AGENT_INFO',
   'KUBECONFIG',
+  // macOS-specific temp dir (/var/folders/…) does not exist in Linux containers.
+  // Shell init scripts and tools that use $TMPDIR will fail to mkdir on Linux.
+  'TMPDIR',
+  'TEMPDIR',
+  'TMP',
+  'TEMP',
 ]);
 
 /** Returns true for env var names that should be blocked from Docker forwarding. */
@@ -765,7 +827,49 @@ const AGENT_CONFIG_FILES: Record<string, string[]> = {
   claude: ['.claude.json'],
 };
 
-function buildDockerCredentialMounts(agentCommand: string, shareAgentAuth: boolean): string[] {
+function seedClaudeProjectTrust(hostFile: string, worktreePath: string): void {
+  let config: Record<string, unknown> = {};
+  if (fs.existsSync(hostFile) && fs.statSync(hostFile).size > 0) {
+    try {
+      config = JSON.parse(fs.readFileSync(hostFile, 'utf8')) as Record<string, unknown>;
+    } catch {
+      console.warn(`[docker-auth] Could not parse ${hostFile}, skipping Claude trust seed`);
+      return;
+    }
+  }
+
+  const projects =
+    config.projects && typeof config.projects === 'object' && !Array.isArray(config.projects)
+      ? (config.projects as Record<string, Record<string, unknown>>)
+      : {};
+  const existing =
+    projects[worktreePath] &&
+    typeof projects[worktreePath] === 'object' &&
+    !Array.isArray(projects[worktreePath])
+      ? projects[worktreePath]
+      : {};
+
+  projects[worktreePath] = {
+    ...existing,
+    hasTrustDialogAccepted: true,
+    hasCompletedProjectOnboarding: true,
+  };
+  config.projects = projects;
+
+  // Atomic write: write to a temp file first, then rename over the original.
+  // rename() is atomic on POSIX filesystems, so concurrent spawns won't corrupt
+  // each other's data even if both read before either writes.
+  const tmpFile = `${hostFile}.tmp.${process.pid}.${Date.now()}`;
+  fs.writeFileSync(tmpFile, JSON.stringify(config, null, 2), { mode: 0o600 });
+  fs.renameSync(tmpFile, hostFile);
+}
+
+function buildDockerCredentialMounts(
+  agentCommand: string,
+  shareAgentAuth: boolean,
+  worktreePath: string,
+  containerHome: string,
+): string[] {
   const mounts: string[] = [];
   const home = process.env.HOME;
   if (!home) return mounts;
@@ -781,19 +885,19 @@ function buildDockerCredentialMounts(agentCommand: string, shareAgentAuth: boole
   };
 
   // SSH keys for git push/pull
-  mountIfExists(`${home}/.ssh`, `${DOCKER_CONTAINER_HOME}/.ssh`);
+  mountIfExists(`${home}/.ssh`, `${containerHome}/.ssh`);
 
   // Git identity / config
-  mountIfExists(`${home}/.gitconfig`, `${DOCKER_CONTAINER_HOME}/.gitconfig`);
+  mountIfExists(`${home}/.gitconfig`, `${containerHome}/.gitconfig`);
 
   // GitHub CLI auth tokens (~/.config/gh/)
-  mountIfExists(`${home}/.config/gh`, `${DOCKER_CONTAINER_HOME}/.config/gh`);
+  mountIfExists(`${home}/.config/gh`, `${containerHome}/.config/gh`);
 
   // npm auth token
-  mountIfExists(`${home}/.npmrc`, `${DOCKER_CONTAINER_HOME}/.npmrc`);
+  mountIfExists(`${home}/.npmrc`, `${containerHome}/.npmrc`);
 
   // General HTTP/git HTTPS credentials (used by git credential helper)
-  mountIfExists(`${home}/.netrc`, `${DOCKER_CONTAINER_HOME}/.netrc`);
+  mountIfExists(`${home}/.netrc`, `${containerHome}/.netrc`);
 
   // Google Application Credentials file (for Vertex AI / gcloud) — mounted
   // at its original path since the env var points there.
@@ -811,23 +915,26 @@ function buildDockerCredentialMounts(agentCommand: string, shareAgentAuth: boole
   if (shareAgentAuth) {
     const baseCommand = path.basename(agentCommand);
     for (const relDir of AGENT_CONFIG_DIRS[baseCommand] ?? []) {
-      const hostDir = path.join(home, '.legion', 'agent-auth', baseCommand, relDir);
+      const hostDir = path.join(home, '.legion-code', 'agent-auth', baseCommand, relDir);
       try {
         fs.mkdirSync(hostDir, { recursive: true, mode: 0o700 });
-        mounts.push('-v', `${hostDir}:${DOCKER_CONTAINER_HOME}/${relDir}`);
+        mounts.push('-v', `${hostDir}:${containerHome}/${relDir}`);
       } catch {
         console.warn(`[docker-auth] Could not create host auth dir ${hostDir}, skipping mount`);
       }
     }
     for (const relFile of AGENT_CONFIG_FILES[baseCommand] ?? []) {
-      const hostFile = path.join(home, '.legion', 'agent-auth', baseCommand, relFile);
+      const hostFile = path.join(home, '.legion-code', 'agent-auth', baseCommand, relFile);
       try {
         const hostDir = path.dirname(hostFile);
         fs.mkdirSync(hostDir, { recursive: true, mode: 0o700 });
         if (!fs.existsSync(hostFile) || fs.statSync(hostFile).size === 0) {
           fs.writeFileSync(hostFile, '{}', { mode: 0o600 });
         }
-        mounts.push('-v', `${hostFile}:${DOCKER_CONTAINER_HOME}/${relFile}`);
+        if (baseCommand === 'claude' && relFile === '.claude.json') {
+          seedClaudeProjectTrust(hostFile, worktreePath);
+        }
+        mounts.push('-v', `${hostFile}:${containerHome}/${relFile}`);
       } catch {
         console.warn(`[docker-auth] Could not create host auth file ${hostFile}, skipping mount`);
       }
@@ -858,10 +965,10 @@ export async function isDockerAvailable(): Promise<boolean> {
 }
 
 /** The default image name for Docker-isolated tasks. */
-export const DOCKER_DEFAULT_IMAGE = 'legion-agent:latest';
+export const DOCKER_DEFAULT_IMAGE = 'legion-code-agent:latest';
 
 /** Label key used to stamp the Dockerfile content hash on built images. */
-const DOCKERFILE_HASH_LABEL = 'legion-dockerfile-hash';
+const DOCKERFILE_HASH_LABEL = 'legion-code-dockerfile-hash';
 
 /**
  * Resolve the path to the bundled Dockerfile.
@@ -895,11 +1002,11 @@ function getDockerfileHash(): string | null {
 }
 
 /**
- * Check if a project has a local Dockerfile at .legion/Dockerfile.
+ * Check if a project has a local Dockerfile at .legion-code/Dockerfile.
  * Returns the absolute path if found, null otherwise.
  */
 export function resolveProjectDockerfile(projectRoot: string): string | null {
-  const p = path.join(projectRoot, '.legion', 'Dockerfile');
+  const p = path.join(projectRoot, '.legion-code', 'Dockerfile');
   try {
     return fs.statSync(p).isFile() ? p : null;
   } catch {
@@ -909,11 +1016,11 @@ export function resolveProjectDockerfile(projectRoot: string): string | null {
 
 /**
  * Derive a deterministic image tag for a project Dockerfile.
- * Tag format: legion-project:<first-12-of-sha256>
+ * Tag format: legion-code-project:<first-12-of-sha256>
  */
 export function projectImageTag(dockerfilePath: string): string {
   const hash = hashDockerfile(dockerfilePath);
-  return `legion-project:${(hash ?? 'unknown').slice(0, 12)}`;
+  return `legion-code-project:${(hash ?? 'unknown').slice(0, 12)}`;
 }
 
 /**
@@ -940,28 +1047,27 @@ export async function dockerImageExists(
     return false;
   }
 
+  // Docker Desktop's containerd image store breaks `docker image inspect <tag>` —
+  // tag-based inspection fails even when the image exists. Work around by fetching
+  // the image ID via `docker image ls --filter` first, then inspecting by ID.
+  const imageId = await new Promise<string | null>((resolve) => {
+    execFile(
+      'docker',
+      ['image', 'ls', '--filter', `reference=${image}`, '--format', '{{.ID}}'],
+      { encoding: 'utf8', timeout: 5000 },
+      (err, stdout) => resolve(err ? null : stdout.trim() || null),
+    );
+  });
+
+  if (!imageId) return false;
+  if (!expectedHash) return true;
+
   return new Promise((resolve) => {
     execFile(
       'docker',
-      [
-        'image',
-        'inspect',
-        '--format',
-        `{{index .Config.Labels "${DOCKERFILE_HASH_LABEL}"}}`,
-        image,
-      ],
+      ['inspect', '--format', `{{index .Config.Labels "${DOCKERFILE_HASH_LABEL}"}}`, imageId],
       { encoding: 'utf8', timeout: 5000 },
-      (err, stdout) => {
-        if (err) {
-          resolve(false);
-          return;
-        }
-        if (!expectedHash) {
-          resolve(true);
-          return;
-        }
-        resolve(stdout.trim() === expectedHash);
-      },
+      (err, stdout) => resolve(!err && stdout.trim() === expectedHash),
     );
   });
 }

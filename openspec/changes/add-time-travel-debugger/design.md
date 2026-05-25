@@ -68,23 +68,23 @@ host-clock `ts` (ms since epoch, same clock the steps tracker uses — see
 ```ts
 // Lives in electron/ipc/timetravel/types.ts
 export type TimelineEventKind =
-  | 'pty_out'       // raw bytes the agent printed (base64)
-  | 'pty_in'        // bytes the user typed into the PTY (base64)
-  | 'tool_call'     // structured (Claude Code hook only)
-  | 'tool_result'   // structured (Claude Code hook only)
-  | 'file_write'    // synthetic: a file changed on disk
-  | 'file_read'     // structured (Claude Code hook only) — best-effort
-  | 'step'          // mirror of an existing steps.json append
-  | 'snapshot'      // pointer to a worktree snapshot (see §4)
-  | 'agent_spawn'   // agent process started / resumed
-  | 'agent_exit'    // agent process exited
-  | 'fork_marker';  // recorded into the *parent* timeline when a fork is made
+  | 'pty_out' // raw bytes the agent printed (base64)
+  | 'pty_in' // bytes the user typed into the PTY (base64)
+  | 'tool_call' // structured (Claude Code hook only)
+  | 'tool_result' // structured (Claude Code hook only)
+  | 'file_write' // synthetic: a file changed on disk
+  | 'file_read' // structured (Claude Code hook only) — best-effort
+  | 'step' // mirror of an existing steps.json append
+  | 'snapshot' // pointer to a worktree snapshot (see §4)
+  | 'agent_spawn' // agent process started / resumed
+  | 'agent_exit' // agent process exited
+  | 'fork_marker'; // recorded into the *parent* timeline when a fork is made
 
 export interface TimelineEvent {
-  seq: number;        // monotonic per task; never reset
-  ts: number;         // Date.now() at capture
+  seq: number; // monotonic per task; never reset
+  ts: number; // Date.now() at capture
   kind: TimelineEventKind;
-  payload: unknown;   // schema depends on kind, validated on read
+  payload: unknown; // schema depends on kind, validated on read
   // Optional pointer back into the byte stream for pty_out: which byte
   // offset of the scrollback recording does this event correspond to?
   // Used so a scrub can "rewind the terminal" to the same visual state.
@@ -110,16 +110,16 @@ time-travel" (default ON). Symmetric with the Telegram opt-in pattern in
 
 ### 3.1 Three capture channels, decreasing fidelity
 
-| Channel | Source | Granularity | Works for |
-|---|---|---|---|
-| **A. Structured hooks** | Claude Code `PreToolUse` / `PostToolUse` / `Stop` settings hooks | Per-tool-call | `claude-code` only |
-| **B. PTY byte stream** | Existing `proc.onData` in `electron/ipc/pty.ts` | Per-flush (~8 ms or 64 KB) | All five agents |
-| **C. Filesystem watch** | `chokidar` (or `fs.watch` if size allows) on the worktree | Per-file-write (debounced 200 ms, same as steps) | All five agents |
+| Channel                 | Source                                                           | Granularity                                      | Works for          |
+| ----------------------- | ---------------------------------------------------------------- | ------------------------------------------------ | ------------------ |
+| **A. Structured hooks** | Claude Code `PreToolUse` / `PostToolUse` / `Stop` settings hooks | Per-tool-call                                    | `claude-code` only |
+| **B. PTY byte stream**  | Existing `proc.onData` in `electron/ipc/pty.ts`                  | Per-flush (~8 ms or 64 KB)                       | All five agents    |
+| **C. Filesystem watch** | `chokidar` (or `fs.watch` if size allows) on the worktree        | Per-file-write (debounced 200 ms, same as steps) | All five agents    |
 
 Channel B is the floor: even for Codex/Gemini/OpenCode/Copilot — which expose
 no hook surface — we always have the PTY bytes and we always have the
 filesystem watcher. Channel A is gravy when it's available: it gives us
-*semantic* labels ("ran Edit on src/foo.ts") that the UI can show as
+_semantic_ labels ("ran Edit on src/foo.ts") that the UI can show as
 clickable rows instead of opaque blobs.
 
 **Assumption**: Claude Code's settings-hook mechanism stays stable. If it
@@ -159,10 +159,10 @@ include a `hooks` block:
 // .claude/settings.json — additions only
 {
   "hooks": {
-    "PreToolUse":  [ { "command": "node <legionResources>/hooks/preToolUse.js" } ],
-    "PostToolUse": [ { "command": "node <legionResources>/hooks/postToolUse.js" } ],
-    "Stop":        [ { "command": "node <legionResources>/hooks/stopHook.js" } ]
-  }
+    "PreToolUse": [{ "command": "node <legionResources>/hooks/preToolUse.js" }],
+    "PostToolUse": [{ "command": "node <legionResources>/hooks/postToolUse.js" }],
+    "Stop": [{ "command": "node <legionResources>/hooks/stopHook.js" }],
+  },
 }
 ```
 
@@ -178,6 +178,7 @@ way `steps.ts` watches `steps.json`, and forwards each new line as a
 `tool_call` / `tool_result` / `step` event into the unified stream.
 
 **Why an on-disk hop and not a socket?** Three reasons:
+
 1. Symmetric with `.claude/steps.json` — proven pattern, same watcher
    plumbing.
 2. Survives Docker mode: a hook running inside the container can write to a
@@ -192,7 +193,7 @@ per task. Ignored patterns:
 - `.git/**` (worktree internals)
 - `.claude/steps.json`, `.claude/timeline.ndjson` (we already emit events
   for these through their dedicated paths)
-- `.legion/**` (our own state)
+- `.legion-code/**` (our own state)
 - `node_modules/**`, `dist/**`, `build/**`, anything matched by the repo's
   `.gitignore`. We parse `.gitignore` with the existing `ignore` heuristic
   from `git.ts` (if needed we add a tiny dep; preference is to reuse
@@ -212,7 +213,7 @@ For each `add` / `change` / `unlink` event we record:
 }
 ```
 
-**Important**: the file *content* isn't in the event payload; only its hash
+**Important**: the file _content_ isn't in the event payload; only its hash
 and a CAS pointer. Repeated writes of the same content are free. This is
 how we make scrub-to-diff cheap (§5) and how we keep storage in check (§4).
 
@@ -267,7 +268,7 @@ tracked, non-ignored file. This is the equivalent of `git write-tree` but
 content-addressed against our own CAS, not git's object store, because:
 
 - We don't want to pollute the user's `.git` with thousands of debug commits.
-- We need snapshots of *uncommitted* state at high frequency without git
+- We need snapshots of _uncommitted_ state at high frequency without git
   add/commit overhead.
 - The CAS already exists for file_write events; trees are basically free.
 
@@ -286,7 +287,7 @@ Three-tier eviction, all configurable in Settings:
 1. **Per-task cap** (default 500 MB). When exceeded, drop oldest PTY
    bin-files until under cap. Events and CAS stay (events are cheap, CAS
    is shared). PTY bytes are the only thing that bloats meaningfully.
-2. **Per-project cap** (default 5 GB). Drops oldest *whole task* timelines
+2. **Per-project cap** (default 5 GB). Drops oldest _whole task_ timelines
    first.
 3. **Age cap** (default 30 days). Whole-task timelines older than this are
    evicted on app start.
@@ -386,7 +387,7 @@ A "Fork from here" button next to the playhead. Clicking it opens a
 `Dialog.tsx` with:
 
 - The current diff at T against snapshot-0 (read-only Monaco).
-- The last user prompt that was *pending* at T (auto-extracted from
+- The last user prompt that was _pending_ at T (auto-extracted from
   `pty_in` events since the previous `step.status === 'awaiting_review'`
   or `tool_result`).
 - A **textarea** pre-filled with that prompt, editable.
@@ -418,7 +419,7 @@ This is the trickiest part of the whole feature. Mechanics:
    created with `git worktree add -b <newBranch>` based off the same
    `baseBranch` as the original task. Then we overwrite working-tree files
    with CAS contents as in (1), then `git add -A && git commit -m
-   "legion: fork point seq=<T>"` so the fork starts from a clean commit
+"legion: fork point seq=<T>"` so the fork starts from a clean commit
    that reflects the agent's actual mid-stream state.
 3. **Agent process** in the original task is **not killed** — forking is
    non-destructive. The original timeline keeps recording. A `fork_marker`
@@ -443,9 +444,9 @@ The fork gets **its own brand-new worktree**. Reasons:
 ### 6.3 Mid-tool-call forks
 
 The trickiest edge case: the user wants to fork at a `seq` that falls
-*between* a `PreToolUse` event and its matching `PostToolUse`. Our policy:
+_between_ a `PreToolUse` event and its matching `PostToolUse`. Our policy:
 
-- The fork's worktree is built from `file_write` events that *completed*
+- The fork's worktree is built from `file_write` events that _completed_
   before T. Events whose `tool_call` was in flight at T but never produced
   a `tool_result` are dropped (they didn't actually finish, so the bytes
   they would have written aren't in our CAS).
@@ -464,7 +465,7 @@ Forks have their own timelines. Forking a fork is the same code path;
 For repos > 500 MB of tracked content, snapshot-0 alone would dominate
 storage. Mitigation:
 
-- Snapshot trees only record paths the agent has *touched* since
+- Snapshot trees only record paths the agent has _touched_ since
   task-spawn (we maintain a "dirty set" populated by channel-C). The
   fork-restore path falls back to git for untouched paths (since they're
   still the same content as `baseBranch`, the fresh `git worktree add`
@@ -483,7 +484,7 @@ Storage grows linearly. Two mitigations:
   (oldest-first); event log + CAS stays so semantic scrub still works.
 - Snapshots are pruned to a logarithmic distribution (keep every snapshot
   in the last hour, every 4th in the prior hour, every 16th before that).
-  Coarser anchors → slower scrub *near old time*, but bounded total size.
+  Coarser anchors → slower scrub _near old time_, but bounded total size.
 
 ---
 
@@ -521,7 +522,10 @@ TimelineEvictionNotice   = 'timeline_eviction_notice',   // push: "we dropped yo
 
 ```ts
 // Renderer → main
-interface StartTimelineRecordingReq { taskId: string; worktreePath: string; }
+interface StartTimelineRecordingReq {
+  taskId: string;
+  worktreePath: string;
+}
 
 interface TimelineSummaryReq {
   taskId: string;
@@ -543,8 +547,11 @@ interface TimelineSummaryResp {
   buckets: TimelineBucket[];
 }
 
-interface TimelineSeekReq { taskId: string; seq: number; }
-type TimelineSeekResp = StateAtT;  // §5.2
+interface TimelineSeekReq {
+  taskId: string;
+  seq: number;
+}
+type TimelineSeekResp = StateAtT; // §5.2
 
 interface TimelineForkFromReq {
   taskId: string;
@@ -556,13 +563,13 @@ interface TimelineForkFromResp {
   newTaskId: string;
   newBranchName: string;
   newWorktreePath: string;
-  skippedToolCalls: number;  // see §6.3
+  skippedToolCalls: number; // see §6.3
 }
 
 // Main → renderer (push)
 interface TimelineEventPush {
   taskId: string;
-  event: TimelineEvent;     // strictly increasing seq per task
+  event: TimelineEvent; // strictly increasing seq per task
 }
 interface TimelineEvictionNoticePush {
   taskId: string;
@@ -696,7 +703,7 @@ incrementally — cheap because we only ever append). Scrubbing calls
   every-event capture (we'd be forced to snapshot only every N events,
   which is what we end up doing anyway in §4.3).
 - **Verdict**: rejected as the primary mechanism; we use git only for
-  the *fork-commit* (one commit per fork, in the new worktree's new
+  the _fork-commit_ (one commit per fork, in the new worktree's new
   branch — that's clean and the user expects it).
 
 ### C. **Parse Claude's transcript JSON instead of hooks**
@@ -740,7 +747,7 @@ Claude Code writes a session transcript to
    per-task timeline model already supports it — the UI is the only new
    piece. Out of scope for v1.
 5. **Editor jump-to-event from the timeline.** Clicking a `tool_call ▸
-   Edit src/foo.ts` event could open the diff in the existing
+Edit src/foo.ts` event could open the diff in the existing
    `DiffViewerDialog`. Trivial wiring; deferred to the implementation PR.
 6. **Auto-fork on hung-agent detection.** The hung-agent detector
    already classifies stuck PTYs. Should it surface a "Rewind to last

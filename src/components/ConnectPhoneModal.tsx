@@ -169,7 +169,15 @@ export function ConnectPhoneModal(props: ConnectPhoneModalProps) {
 
   async function handleDisconnect() {
     stopPolling?.();
-    await stopRemoteAccess();
+    const result = await stopRemoteAccess();
+    if (!result.stopped) {
+      if (result.reason === 'coordinator_active') {
+        setError('Cannot disconnect while a coordinator is active. Stop the coordinator first.');
+      } else {
+        setError('Failed to disconnect. Please try again.');
+      }
+      return;
+    }
     setQrDataUrl(null);
     props.onClose();
   }

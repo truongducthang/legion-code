@@ -2,11 +2,21 @@ import type { AgentDef, StepEntry, WorktreeStatus } from '../ipc/types';
 import type { DockerSource } from '../lib/docker';
 import type { LookPreset, AppearanceMode } from '../lib/look';
 import type { KeyBinding } from '../lib/keybindings';
+import type { CustomTheme } from '../lib/custom-theme';
 
 /** A user override for a binding: partial key/modifiers to apply, or null to unbind. */
 export type KeybindingOverride = Partial<Pick<KeyBinding, 'key' | 'modifiers'>> | null;
 
 export type GitIsolationMode = 'worktree' | 'direct' | 'none';
+
+export interface StagedNotification {
+  batchId: string;
+  notificationIds: string[];
+  text: string;
+  autoFireAt: number;
+  userEdited: boolean;
+  hiddenCompletionCount?: number;
+}
 
 export interface TaskGitStatusSnapshot extends WorktreeStatus {
   refreshedAt: number;
@@ -93,6 +103,21 @@ export interface Task {
   stepsEnabled?: boolean;
   stepsContent?: StepEntry[];
   lastInputAt?: string;
+  stagedNotification?: StagedNotification;
+  // Coordinator fields
+  coordinatorMode?: boolean;
+  propagateSkipPermissions?: boolean;
+  coordinatedBy?: string;
+  controlledBy?: 'coordinator' | 'human';
+  mcpConfigPath?: string;
+  mcpLaunchArgs?: string[];
+  preambleFileExistedBefore?: boolean;
+  signalDoneReceived?: boolean;
+  signalDoneAt?: string;
+  signalDoneConsumed?: boolean;
+  needsReview?: boolean;
+  mcpStartupStatus?: 'pending' | 'ready' | 'error';
+  mcpStartupError?: string;
 }
 
 export interface Terminal {
@@ -132,6 +157,17 @@ export interface PersistedTask {
   savedPromptedAgentIndexes?: number[];
   planFileName?: string;
   stepsEnabled?: boolean;
+  // Coordinator fields
+  coordinatorMode?: boolean;
+  propagateSkipPermissions?: boolean;
+  coordinatedBy?: string;
+  controlledBy?: 'coordinator' | 'human';
+  mcpConfigPath?: string;
+  preambleFileExistedBefore?: boolean;
+  signalDoneReceived?: boolean;
+  signalDoneAt?: string;
+  signalDoneConsumed?: boolean;
+  needsReview?: boolean;
 }
 
 export interface PersistedTerminal {
@@ -212,6 +248,7 @@ export interface PersistedState {
   showSteps?: boolean;
   showSidebarTips?: boolean;
   showSidebarProgress?: boolean;
+  projectsCollapsed?: boolean;
   desktopNotificationsEnabled?: boolean;
   inactiveColumnOpacity?: number;
   editorCommand?: string;
@@ -222,6 +259,7 @@ export interface PersistedState {
   keybindingMigrationDismissed?: boolean;
   focusMode?: boolean;
   verboseLogging?: boolean;
+  activeCustomThemeId?: string | null;
   appearanceMode?: AppearanceMode;
   lightThemePreset?: LookPreset;
   lightThemeCustomId?: string | null;
@@ -230,6 +268,16 @@ export interface PersistedState {
   /** Non-secret Telegram bot config. Bot token and OpenAI API key are NOT
    *  here — they live in the main process via Electron `safeStorage`. */
   telegram?: PersistedTelegramConfig;
+  coordinatorModeEnabled?: boolean;
+  coordinatorNotificationDelayMs?: number;
+  coordinatorControlHintDismissed?: boolean;
+}
+
+export interface MCPStatus {
+  running: boolean;
+  port: number | null;
+  coordinatorTaskId: string | null;
+  mcpConfigPath: string | null;
 }
 
 // Panel cell IDs. Shell terminals use "shell:0", "shell:1", etc.
@@ -302,6 +350,7 @@ export interface AppStore {
   showSteps: boolean;
   showSidebarTips: boolean;
   showSidebarProgress: boolean;
+  projectsCollapsed: boolean;
   desktopNotificationsEnabled: boolean;
   inactiveColumnOpacity: number;
   editorCommand: string;
@@ -322,6 +371,8 @@ export interface AppStore {
   /** Per-task flag: true when the task is rendering its focus-mode two-column layout. */
   taskSplitMode: Record<string, boolean>;
   verboseLogging: boolean;
+  customThemes: Record<string, CustomTheme>;
+  activeCustomThemeId: string | null;
   appearanceMode: AppearanceMode;
   lightThemePreset: LookPreset;
   lightThemeCustomId: string | null;
@@ -329,4 +380,8 @@ export interface AppStore {
   darkThemeCustomId: string | null;
   telegram: PersistedTelegramConfig;
   telegramHasToken: boolean;
+  coordinatorModeEnabled: boolean;
+  coordinatorNotificationDelayMs: number;
+  coordinatorControlHintDismissed: boolean;
+  mcpStatus: MCPStatus;
 }

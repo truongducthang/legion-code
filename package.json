@@ -1,5 +1,5 @@
 {
-  "name": "legion",
+  "name": "legion-code",
   "version": "2.0.0",
   "description": "Dispatch AI coding agents in parallel, each in its own git worktree.",
   "author": {
@@ -14,11 +14,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/truongducthang/legion.git"
+    "url": "git+https://github.com/truongducthang/legion-code.git"
   },
-  "homepage": "https://github.com/truongducthang/legion#readme",
+  "homepage": "https://github.com/truongducthang/legion-code#readme",
   "bugs": {
-    "url": "https://github.com/truongducthang/legion/issues"
+    "url": "https://github.com/truongducthang/legion-code/issues"
   },
   "keywords": [
     "ai-agents",
@@ -32,32 +32,42 @@
   "main": "dist-electron/main.js",
   "type": "module",
   "scripts": {
-    "dev": "npm run compile && concurrently -k \"vite --config electron/vite.config.electron.ts\" \"wait-on http://localhost:1421 && cross-env VITE_DEV_SERVER_URL=http://localhost:1421 electron --no-sandbox dist-electron/main.js\"",
+    "dev": "npm run compile && npm run build:mcp && concurrently -k \"vite --config electron/vite.config.electron.ts\" \"wait-on http://localhost:1421 && cross-env VITE_DEV_SERVER_URL=http://localhost:1421 electron --no-sandbox dist-electron/main.js\"",
     "typecheck": "tsc --noEmit",
     "compile": "tsc -p electron/tsconfig.json",
     "build:frontend": "cross-env NODE_OPTIONS=--max-old-space-size=4096 vite build --config electron/vite.config.electron.ts",
+    "build:mcp": "esbuild dist-electron/mcp/server.js --bundle --platform=node --format=cjs --outfile=dist-electron/mcp-server.cjs",
     "build:remote": "vite build --config src/remote/vite.config.ts",
-    "build": "npm run build:frontend && npm run build:remote && npm run compile && electron-builder",
+    "build": "npm run build:frontend && npm run build:remote && npm run compile && npm run build:mcp && electron-builder",
     "serve": "vite preview --config electron/vite.config.electron.ts",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
+    "lint:dead": "knip",
+    "lint:arch": "depcruise --config .dependency-cruiser.cjs src electron",
+    "lint:security": "command -v semgrep >/dev/null 2>&1 && semgrep scan --config .semgrep/ --severity WARNING --error || (echo 'semgrep not installed (brew install semgrep or pip install semgrep)' >&2; exit 1)",
+    "test:security-rules": "node scripts/test-semgrep-filesystem-safety.mjs",
+    "lint:secrets": "command -v gitleaks >/dev/null 2>&1 && gitleaks detect --config .gitleaks.toml || (echo 'gitleaks not installed (brew install gitleaks)' >&2; exit 1)",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "check": "npm run typecheck && npm run lint && npm run format:check",
+    "check": "npm run compile && npm run typecheck && npm run lint && npm run format:check",
+    "check:static": "npm run typecheck && npm run lint && npm run lint:dead && npm run lint:arch",
     "release": "npm run typecheck && npm version patch && git push --follow-tags",
     "postinstall": "node scripts/fix-node-pty-spawn-helper.mjs",
     "prepare": "husky && git config core.hooksPath .husky"
   },
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@xterm/addon-fit": "^0.12.0-beta.195",
     "@xterm/addon-web-links": "^0.13.0-beta.195",
     "@xterm/addon-webgl": "^0.20.0-beta.194",
     "@xterm/xterm": "^6.1.0-beta.195",
-    "dompurify": "^3.4.2",
     "grammy": "^1.43.0",
+    "colord": "^2.9.3",
+    "dompurify": "^3.4.5",
+    "electron-updater": "^6.8.3",
     "marked": "^17.0.3",
     "mermaid": "^11.15.0",
     "monaco-editor": "^0.55.1",
@@ -65,7 +75,7 @@
     "qrcode": "^1.5.4",
     "shiki": "^4.0.2",
     "solid-js": "^1.9.11",
-    "ws": "^8.19.0"
+    "ws": "^8.20.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.3",
@@ -77,12 +87,15 @@
     "@vitest/coverage-v8": "^4.0.18",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
+    "dependency-cruiser": "^17.4.0",
     "electron": "^40.8.5",
     "electron-builder": "^26.8.1",
+    "esbuild": "^0.27.4",
     "eslint": "^9.39.3",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-solid": "^0.14.5",
     "husky": "^9.1.7",
+    "knip": "^6.12.2",
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
     "typescript": "~5.9.3",
@@ -108,7 +121,7 @@
     "*.{js,cjs,json,md,html,css}": "prettier --write"
   },
   "build": {
-    "appId": "com.legion.app",
+    "appId": "com.legion-code.app",
     "productName": "Legion",
     "directories": {
       "buildResources": "build",
@@ -121,7 +134,8 @@
       "electron/preload.cjs"
     ],
     "asarUnpack": [
-      "**/node-pty/**"
+      "**/node-pty/**",
+      "dist-electron/mcp-server.cjs"
     ],
     "extraResources": [
       {
@@ -145,7 +159,7 @@
       "category": "Development",
       "desktop": {
         "entry": {
-          "StartupWMClass": "legion",
+          "StartupWMClass": "legion-code",
           "StartupNotify": "true"
         }
       }
@@ -164,7 +178,10 @@
       "shortcutName": "Legion"
     },
     "mac": {
-      "target": "dmg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "extendInfo": {

@@ -1,0 +1,262 @@
+#!/usr/bin/env node
+// MCP server entry point — standalone Node.js script.
+// Speaks MCP over stdio to Claude Code, delegates to the Electron app via HTTP.
+
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { MCPClient } from './client.js';
+import { selectTools } from './mcp-tool-list.js';
+import { validateBranchName } from './validation.js';
+
+// Parse CLI args
+const args = process.argv.slice(2);
+let url = '';
+let taskId = ''; // set for sub-tasks: enables signal_done
+let coordinatorId = ''; // set for coordinator: sent as coordinatorTaskId in create_task
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--url' && args[i + 1]) {
+    url = args[++i];
+  } else if (args[i] === '--task-id' && args[i + 1]) {
+    taskId = args[++i];
+  } else if (args[i] === '--coordinator-id' && args[i + 1]) {
+    coordinatorId = args[++i];
+  }
+}
+
+const token = process.env.PARALLEL_CODE_MCP_TOKEN ?? '';
+const doneToken = process.env.PARALLEL_CODE_MCP_DONE_TOKEN || undefined;
+
+if (!url || !token) {
+  console.error(
+    'Usage: node server.js --url <remote-server-url> [--task-id <taskId>] [--coordinator-id <coordinatorId>]\n' +
+      'Token must be set via PARALLEL_CODE_MCP_TOKEN environment variable.',
+  );
+  process.exit(1);
+}
+
+// Reject coordinator/task IDs that contain HTTP header-unsafe characters.
+// These values are forwarded as X-Coordinator-Id / X-Task-Id headers; a newline
+// would allow header injection into every outgoing request.
+if (coordinatorId && /[\r\n]/.test(coordinatorId)) {
+  console.error('Invalid --coordinator-id: must not contain newline characters.');
+  process.exit(1);
+}
+if (taskId && /[\r\n]/.test(taskId)) {
+  console.error('Invalid --task-id: must not contain newline characters.');
+  process.exit(1);
+}
+
+const client = new MCPClient(url, token, coordinatorId || undefined, doneToken);
+
+const server = new Server(
+  { name: 'parallel-code', version: '1.0.0' },
+  { capabilities: { tools: {} } },
+);
+
+// --- Tool definitions ---
+
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return { tools: selectTools(taskId, coordinatorId) };
+});
+
+// --- Tool execution ---
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: params } = request.params;
+
+  // Sub-tasks may only call signal_done
+  if (taskId && !coordinatorId && name !== 'signal_done') {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Error: '${name}' is not available to sub-tasks. Only signal_done is permitted.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  try {
+    switch (name) {
+      case 'create_task': {
+        const p = params as Record<string, unknown>;
+        const rawBranch = p.baseBranch;
+        const baseBranch =
+          rawBranch !== undefined ? validateBranchName(rawBranch, 'baseBranch') : undefined;
+        const result = await client.createTask({
+          name: p.name as string,
+          prompt: p.prompt as string | undefined,
+          coordinatorTaskId: coordinatorId || undefined,
+          baseBranch,
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'list_tasks': {
+        const tasks = await client.listTasks();
+        return { content: [{ type: 'text', text: JSON.stringify(tasks, null, 2) }] };
+      }
+
+      case 'get_task_status': {
+        const result = await client.getTaskStatus(
+          (params as Record<string, unknown>).taskId as string,
+        );
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'send_prompt': {
+        await client.sendPrompt(
+          (params as Record<string, unknown>).taskId as string,
+          (params as Record<string, unknown>).prompt as string,
+        );
+        return { content: [{ type: 'text', text: 'Prompt sent successfully.' }] };
+      }
+
+      case 'wait_for_idle': {
+        const result = await client.waitForIdle(
+          (params as Record<string, unknown>).taskId as string,
+          (params as Record<string, unknown>).timeoutMs as number | undefined,
+        );
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'get_task_diff': {
+        const result = await client.getTaskDiff(
+          (params as Record<string, unknown>).taskId as string,
+        );
+        // Return files summary + truncated diff
+        const summary = result.files
+          .map(
+            (f) =>
+              `${f.status} ${f.path} (+${f.lines_added} -${f.lines_removed})` +
+              (f.committed ? '' : ' [NOT COMMITTED — will be auto-committed on merge]'),
+          )
+          .join('\n');
+        let diffText: string;
+        if (result.diff.length > 50_000) {
+          result.truncated = true;
+          result.originalSizeBytes = result.diff.length;
+          diffText = result.diff.slice(0, 50_000) + '\n... (diff truncated)';
+        } else {
+          diffText = result.diff;
+        }
+        return {
+          content: [{ type: 'text', text: `Changed files:\n${summary}\n\n${diffText}` }],
+        };
+      }
+
+      case 'get_task_output': {
+        const result = await client.getTaskOutput(
+          (params as Record<string, unknown>).taskId as string,
+        );
+        return { content: [{ type: 'text', text: result.output }] };
+      }
+
+      case 'merge_task': {
+        const p = params as Record<string, unknown>;
+        const result = await client.mergeTask(p.taskId as string, {
+          squash: p.squash as boolean | undefined,
+          message: p.message as string | undefined,
+          cleanup: p.cleanup as boolean | undefined,
+        });
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'close_task': {
+        await client.closeTask((params as Record<string, unknown>).taskId as string);
+        return { content: [{ type: 'text', text: 'Task closed successfully.' }] };
+      }
+
+      case 'wait_for_signal_done': {
+        if (!coordinatorId) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'Error: wait_for_signal_done is only available to coordinators (no --coordinator-id configured).',
+              },
+            ],
+            isError: true,
+          };
+        }
+        const result = await client.waitForSignalDone(
+          coordinatorId,
+          (params as Record<string, unknown>).timeoutMs as number | undefined,
+        );
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      }
+
+      case 'review_and_merge_task': {
+        const p = params as Record<string, unknown>;
+        const result = await client.reviewAndMergeTask(p.taskId as string, {
+          squash: p.squash as boolean | undefined,
+          message: p.message as string | undefined,
+        });
+        const summary = result.diff.files
+          .map(
+            (f) =>
+              `${f.status} ${f.path} (+${f.lines_added} -${f.lines_removed})` +
+              (f.committed ? '' : ' [NOT COMMITTED — will be auto-committed on merge]'),
+          )
+          .join('\n');
+        let diffText = result.diff.diff;
+        if (diffText.length > 50_000) {
+          diffText = diffText.slice(0, 50_000) + '\n... (diff truncated)';
+        }
+        const mergeInfo = `Merged into ${result.merge.mainBranch}: +${result.merge.linesAdded} -${result.merge.linesRemoved} lines`;
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `${mergeInfo}\n\nChanged files:\n${summary}\n\n${diffText}`,
+            },
+          ],
+        };
+      }
+
+      case 'signal_done': {
+        if (!taskId) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'Error: signal_done is only available to sub-tasks (no --task-id configured).',
+              },
+            ],
+            isError: true,
+          };
+        }
+        await client.signalDone(taskId);
+        return {
+          content: [{ type: 'text', text: 'Done signal sent. The coordinator has been notified.' }],
+        };
+      }
+
+      default:
+        return {
+          content: [{ type: 'text', text: `Unknown tool: ${name}` }],
+          isError: true,
+        };
+    }
+  } catch (err) {
+    return {
+      content: [
+        { type: 'text', text: `Error: ${err instanceof Error ? err.message : String(err)}` },
+      ],
+      isError: true,
+    };
+  }
+});
+
+// Start the server
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch((err) => {
+  console.error('MCP server failed to start:', err);
+  process.exit(1);
+});
